@@ -302,7 +302,19 @@ async function buildAllModelEntries(kindFilter, combos, customModels, modelAlias
     if (combo.kind === "webSearch" || combo.kind === "webFetch") {
       entry.kind = combo.kind;
     }
+    if (combo.context_length) {
+      entry.context_length = Number(combo.context_length);
+    }
     entries.push(entry);
+
+    const bareEntry = { id: combo.name, object: "model", owned_by: "combo" };
+    if (combo.kind === "webSearch" || combo.kind === "webFetch") {
+      bareEntry.kind = combo.kind;
+    }
+    if (combo.context_length) {
+      bareEntry.context_length = Number(combo.context_length);
+    }
+    entries.push(bareEntry);
   }
 
   if (!dbAvailable) {
@@ -590,6 +602,7 @@ export async function buildModelsList(kindFilter, options = {}) {
     };
     if (entry.kind) model.kind = entry.kind;
     if (entry.capabilities) model.capabilities = entry.capabilities;
+    if (entry.context_length) model.context_length = entry.context_length;
     dedupedModels.push(model);
   }
 

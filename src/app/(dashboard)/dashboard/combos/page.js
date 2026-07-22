@@ -278,7 +278,16 @@ function ComboCard({ combo, getCaps, activeProviders = [], copied, onCopy, onEdi
             <span className="material-symbols-outlined text-primary text-[18px]">layers</span>
           </div>
           <div className="min-w-0 flex-1">
-            <code className="block truncate font-mono text-sm font-medium">{combo.name}</code>
+            <div className="flex items-center gap-2">
+              <code className="block truncate font-mono text-sm font-medium">{combo.name}</code>
+              {combo.context_length && (
+                <span className="text-[10px] px-1.5 py-0.5 rounded bg-primary/10 text-primary font-mono font-medium shrink-0">
+                  {combo.context_length >= 1000000
+                    ? `${(combo.context_length / 1000000).toFixed(1)}M ctx`
+                    : `${(combo.context_length / 1000).toFixed(0)}k ctx`}
+                </span>
+              )}
+            </div>
             <div className="mt-1 flex min-w-0 flex-wrap items-center gap-1">
               {combo.models.length === 0 ? (
                 <span className="text-xs text-text-muted italic">No models</span>
@@ -480,6 +489,7 @@ function ModelItem({ id, index, model, isFirst, isLast, onEdit, onMoveUp, onMove
 function ComboFormModal({ isOpen, combo, onClose, onSave, activeProviders, kindFilter = null }) {
   // Initialize state with combo values - key prop on parent handles reset on remount
   const [name, setName] = useState(combo?.name || "");
+  const [contextLength, setContextLength] = useState(combo?.context_length || "");
   const [models, setModels] = useState(combo?.models || []);
   const [showModelSelect, setShowModelSelect] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -573,7 +583,11 @@ function ComboFormModal({ isOpen, combo, onClose, onSave, activeProviders, kindF
   const handleSave = async () => {
     if (!validateName(name)) return;
     setSaving(true);
-    await onSave({ name: name.trim(), models });
+    await onSave({
+      name: name.trim(),
+      models,
+      context_length: contextLength ? Number(contextLength) : null
+    });
     setSaving(false);
   };
 
@@ -598,6 +612,20 @@ function ComboFormModal({ isOpen, combo, onClose, onSave, activeProviders, kindF
             />
             <p className="text-[10px] text-text-muted mt-0.5">
               Only letters, numbers, -, _ and . allowed
+            </p>
+          </div>
+
+          {/* Context Length */}
+          <div>
+            <Input
+              label="Advertised Context Length (optional)"
+              type="number"
+              value={contextLength}
+              onChange={(e) => setContextLength(e.target.value)}
+              placeholder="e.g. 1000000 (leave blank for auto)"
+            />
+            <p className="text-[10px] text-text-muted mt-0.5">
+              Advertised max context window tokens via /v1/models (e.g. 1000000 for 1M tokens)
             </p>
           </div>
 
