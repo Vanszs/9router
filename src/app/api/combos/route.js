@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getCombos, createCombo, getComboByName } from "@/lib/localDb";
+import { invalidateAllowedModelsCache } from "@/sse/services/allowedModels.js";
 
 export const dynamic = "force-dynamic";
 
@@ -39,6 +40,7 @@ export async function POST(request) {
     }
 
     const combo = await createCombo({ name, models: models || [], kind: kind || null, context_length: context_length ? Number(context_length) : null });
+    invalidateAllowedModelsCache();
 
     return NextResponse.json(combo, { status: 201 });
   } catch (error) {
