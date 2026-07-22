@@ -329,6 +329,7 @@ export default function ComboDetailPage() {
             <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
               <span className="text-[10px] text-text-muted">Presets:</span>
               {[
+                { label: "128k", value: 128000 },
                 { label: "256k", value: 256000 },
                 { label: "512k", value: 512000 },
                 { label: "1M", value: 1000000 },
@@ -365,7 +366,10 @@ export default function ComboDetailPage() {
                 </button>
               )}
             </div>
-            <p className="text-[10px] text-text-muted mt-1">Advertised max context window tokens via /v1/models (e.g. 1000000 for 1M tokens)</p>
+            <p className="text-[10px] text-amber-600 dark:text-amber-400 mt-1 flex items-center gap-1">
+              <span className="material-symbols-outlined text-[13px]">warning</span>
+              Note: Advertised context window tokens via /v1/models. Real capacity depends on the underlying models.
+            </p>
           </div>
           <div className="flex items-center justify-between">
             <div>
