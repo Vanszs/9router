@@ -326,7 +326,46 @@ export default function ComboDetailPage() {
           </div>
           <div>
             <Input label="Advertised Context Length (optional)" type="number" value={contextLength} onChange={(e) => setContextLength(e.target.value)} onBlur={handleSaveContextLength} placeholder="e.g. 1000000 (leave blank for auto)" />
-            <p className="text-[10px] text-text-muted mt-0.5">Advertised max context window tokens via /v1/models (e.g. 1000000 for 1M tokens)</p>
+            <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+              <span className="text-[10px] text-text-muted">Presets:</span>
+              {[
+                { label: "256k", value: 256000 },
+                { label: "512k", value: 512000 },
+                { label: "1M", value: 1000000 },
+                { label: "2M", value: 2000000 },
+              ].map((p) => (
+                <button
+                  key={p.label}
+                  type="button"
+                  onClick={async () => {
+                    setContextLength(String(p.value));
+                    await saveCombo({ context_length: p.value });
+                    await fetchAll();
+                  }}
+                  className={`px-1.5 py-0.5 rounded text-[10px] font-mono transition-colors border ${
+                    Number(contextLength) === p.value
+                      ? "bg-primary/10 border-primary/40 text-primary font-medium"
+                      : "bg-black/[0.03] dark:bg-white/[0.03] border-black/10 dark:border-white/10 text-text-muted hover:border-primary/40 hover:text-text-main"
+                  }`}
+                >
+                  {p.label}
+                </button>
+              ))}
+              {contextLength && (
+                <button
+                  type="button"
+                  onClick={async () => {
+                    setContextLength("");
+                    await saveCombo({ context_length: null });
+                    await fetchAll();
+                  }}
+                  className="px-1.5 py-0.5 rounded text-[10px] text-text-muted hover:text-red-500 transition-colors"
+                >
+                  Clear
+                </button>
+              )}
+            </div>
+            <p className="text-[10px] text-text-muted mt-1">Advertised max context window tokens via /v1/models (e.g. 1000000 for 1M tokens)</p>
           </div>
           <div className="flex items-center justify-between">
             <div>
