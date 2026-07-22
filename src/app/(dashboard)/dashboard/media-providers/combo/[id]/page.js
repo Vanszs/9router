@@ -122,6 +122,7 @@ export default function ComboDetailPage() {
   const [combo, setCombo] = useState(null);
   const [loading, setLoading] = useState(true);
   const [name, setName] = useState("");
+  const [contextLength, setContextLength] = useState("");
   const [nameError, setNameError] = useState("");
   const [providers, setProviders] = useState([]);
   const [roundRobin, setRoundRobin] = useState(false);
@@ -154,6 +155,7 @@ export default function ComboDetailPage() {
       const c = await comboRes.json();
       setCombo(c);
       setName(c.name);
+      setContextLength(c.context_length || "");
       setProviders(c.models || []);
       const s = settingsRes.ok ? await settingsRes.json() : {};
       setRoundRobin(s.comboStrategies?.[c.name]?.fallbackStrategy === "round-robin");
@@ -187,6 +189,12 @@ export default function ComboDetailPage() {
     if (!validateName(name)) return;
     if (name === combo.name) return;
     const ok = await saveCombo({ name });
+    if (ok) await fetchAll();
+  };
+  const handleSaveContextLength = async () => {
+    const val = contextLength ? Number(contextLength) : null;
+    if (val === combo.context_length) return;
+    const ok = await saveCombo({ context_length: val });
     if (ok) await fetchAll();
   };
   const handleAddModel = async (model) => {
@@ -315,6 +323,10 @@ export default function ComboDetailPage() {
           <div>
             <Input label="Combo Name" value={name} onChange={(e) => { setName(e.target.value); validateName(e.target.value); }} onBlur={handleSaveName} error={nameError} />
             <p className="text-[10px] text-text-muted mt-0.5">Only letters, numbers, -, _ and .</p>
+          </div>
+          <div>
+            <Input label="Advertised Context Length (optional)" type="number" value={contextLength} onChange={(e) => setContextLength(e.target.value)} onBlur={handleSaveContextLength} placeholder="e.g. 1000000 (leave blank for auto)" />
+            <p className="text-[10px] text-text-muted mt-0.5">Advertised max context window tokens via /v1/models (e.g. 1000000 for 1M tokens)</p>
           </div>
           <div className="flex items-center justify-between">
             <div>
