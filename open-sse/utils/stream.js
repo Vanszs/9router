@@ -1,7 +1,7 @@
 import { translateResponse, initState } from "../translator/index.js";
 import { FORMATS } from "../translator/formats.js";
 import { trackPendingRequest, appendRequestLog } from "@/lib/usageDb.js";
-import { extractUsage, mergeUsage, hasValidUsage, estimateUsage, logUsage, addBufferToUsage, filterUsageForFormat, COLORS } from "./usageTracking.js";
+import { extractUsage, mergeUsage, hasValidUsage, estimateUsage, logUsage, addBufferToUsage, filterUsageForFormat, hasZeroCompletionWithContent, fixZeroCompletionUsage, COLORS } from "./usageTracking.js";
 import { parseSSELine, hasValuableContent, fixInvalidId, formatSSE } from "./streamHelpers.js";
 import { getOpenAIResponsesEventName, isOpenAIResponsesTerminalEvent, formatIncompleteOpenAIResponsesStreamFailure } from "./responsesStreamHelpers.js";
 import { dbg, isDebugEnabled } from "./debugLog.js";
@@ -230,6 +230,17 @@ export function createSSEStream(options = {}) {
                 totalContentLength += reasoning.length;
                 accumulatedThinking += reasoning;
               }
+              // Tool-call-only responses (e.g. agentic coding tools with large
+              // tool arrays) produce real output entirely via delta.tool_calls,
+              // with content/reasoning empty. Count function name + streamed
+              // argument chunk length so totalContentLength isn't stuck at 0
+              // and the zero-completion / estimation fallbacks below can fire.
+              if (Array.isArray(delta?.tool_calls)) {
+                for (const tc of delta.tool_calls) {
+                  if (typeof tc?.function?.name === "string") totalContentLength += tc.function.name.length;
+                  if (typeof tc?.function?.arguments === "string") totalContentLength += tc.function.arguments.length;
+                }
+              }
 
               const extracted = extractUsage(parsed);
               if (extracted) {
@@ -242,6 +253,15 @@ export function createSSEStream(options = {}) {
                 parsed.usage = filterUsageForFormat(estimated, FORMATS.OPENAI);
                 output = `data: ${JSON.stringify(parsed)}\n`;
                 usage = estimated;
+                injectedUsage = true;
+              } else if (isFinishChunk && hasZeroCompletionWithContent(parsed.usage, totalContentLength)) {
+                // Provider reported completion_tokens: 0 (e.g. Shiteru "estimated"
+                // finish chunk on a large prompt) despite real streamed content.
+                // Keep the provider's prompt_tokens, patch only the output side.
+                const fixed = fixZeroCompletionUsage(parsed.usage, totalContentLength);
+                parsed.usage = filterUsageForFormat(fixed, FORMATS.OPENAI);
+                output = `data: ${JSON.stringify(parsed)}\n`;
+                usage = fixed;
                 injectedUsage = true;
               } else if (isFinishChunk && usage) {
                 const buffered = addBufferToUsage(usage);
@@ -322,11 +342,25 @@ export function createSSEStream(options = {}) {
           totalContentLength += parsed.delta.thinking.length;
           accumulatedThinking += parsed.delta.thinking;
         }
+        // Claude format - tool_use input streamed as partial_json deltas.
+        // Tool-call-only turns would otherwise leave totalContentLength at 0.
+        if (typeof parsed.delta?.partial_json === "string") {
+          totalContentLength += parsed.delta.partial_json.length;
+        }
         
         // OpenAI format - content
         if (parsed.choices?.[0]?.delta?.content) {
           totalContentLength += parsed.choices[0].delta.content.length;
           accumulatedContent += parsed.choices[0].delta.content;
+        }
+        // OpenAI format - tool calls (name + streamed argument chunks). Without
+        // this, tool-call-only turns leave totalContentLength at 0 and the
+        // zero-completion/estimation usage fallbacks never fire.
+        if (Array.isArray(parsed.choices?.[0]?.delta?.tool_calls)) {
+          for (const tc of parsed.choices[0].delta.tool_calls) {
+            if (typeof tc?.function?.name === "string") totalContentLength += tc.function.name.length;
+            if (typeof tc?.function?.arguments === "string") totalContentLength += tc.function.arguments.length;
+          }
         }
 
         // Detect and correct native Kimi tool-call markup that leaks into the
@@ -429,6 +463,13 @@ export function createSSEStream(options = {}) {
               const estimated = estimateUsage(body, totalContentLength, sourceFormat);
               item.usage = filterUsageForFormat(estimated, sourceFormat); // Filter + already has buffer
               state.usage = estimated;
+            } else if (state.finishReason && isFinishChunk && hasZeroCompletionWithContent(item.usage, totalContentLength)) {
+              // Provider reported zero completion tokens despite real streamed
+              // content (e.g. Shiteru-style "estimated" usage on large prompts).
+              // Patch just the output side, keep the provider's prompt_tokens.
+              const fixed = fixZeroCompletionUsage(item.usage, totalContentLength);
+              item.usage = filterUsageForFormat(fixed, sourceFormat);
+              state.usage = fixed;
             } else if (state.finishReason && isFinishChunk && state.usage) {
               // Add buffer and filter usage for client (but keep original in state.usage for logging)
               const buffered = addBufferToUsage(state.usage);
@@ -464,6 +505,11 @@ export function createSSEStream(options = {}) {
 
           if (!hasValidUsage(usage) && totalContentLength > 0) {
             usage = estimateUsage(body, totalContentLength, FORMATS.OPENAI);
+          } else if (hasZeroCompletionWithContent(usage, totalContentLength)) {
+            // Provider (e.g. Shiteru on large prompts) reported completion_tokens: 0
+            // despite real streamed content. hasValidUsage() above passes because
+            // prompt_tokens is non-zero, so patch just the output side here.
+            usage = fixZeroCompletionUsage(usage, totalContentLength);
           }
 
           if (hasValidUsage(usage)) {
@@ -570,6 +616,10 @@ export function createSSEStream(options = {}) {
 
         if (!hasValidUsage(state?.usage) && totalContentLength > 0) {
           state.usage = estimateUsage(body, totalContentLength, sourceFormat);
+        } else if (hasZeroCompletionWithContent(state?.usage, totalContentLength)) {
+          // Provider reported completion_tokens: 0 despite real streamed content.
+          // hasValidUsage() above passes because prompt_tokens is non-zero.
+          state.usage = fixZeroCompletionUsage(state.usage, totalContentLength);
         }
 
         if (hasValidUsage(state?.usage)) {
