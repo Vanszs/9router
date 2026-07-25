@@ -7,14 +7,19 @@
  * This significantly reduces the risk of being flagged by Google's anti-abuse systems.
  */
 
-import { CLOUD_CODE_API, LOAD_CODE_ASSIST_HEADERS, LOAD_CODE_ASSIST_METADATA } from "../config/appConstants.js";
+import { CLOUD_CODE_API, GEMINI_CLI_LOAD_CODE_ASSIST_HEADERS, GEMINI_CLI_LOAD_CODE_ASSIST_METADATA } from "../config/appConstants.js";
 
 // ─── Cache ────────────────────────────────────────────────────────────────────
 // connectionId -> { projectId: string, fetchedAt: number }
 const projectIdCache = new Map();
 
-/** How long a cached project ID is considered fresh (1 hour). */
-const CACHE_TTL_MS = 60 * 60 * 1000;
+/** How long a cached project ID is considered fresh (30 days).
+ *  The projectId is bound to the Google account, not the OAuth token, so it
+ *  does not change as long as the connection stays the same. The
+ *  in-memory cache is also backed by the DB (see chat.js:405 + tokenRefresh),
+ *  but a long TTL here avoids unnecessary re-fetches on cold misses within a
+ *  running process. ponytail: 30-day cap is generous — re-validate on revoke. */
+const CACHE_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 
 // ─── Pending-fetch deduplication ─────────────────────────────────────────────
 // connectionId -> { promise: Promise<string|null>, controller: AbortController, startedAt: number }
@@ -130,6 +135,19 @@ export function invalidateProjectId(connectionId) {
 }
 
 /**
+ * Seed the in-memory cache with an already-known projectId (e.g. loaded from
+ * the DB) so getProjectIdForConnection returns it without an upstream fetch.
+ * Uses the current timestamp for fetchedAt; the long TTL keeps it valid.
+ *
+ * @param {string} connectionId
+ * @param {string} projectId
+ */
+export function seedProjectIdCache(connectionId, projectId) {
+    if (!connectionId || !projectId) return;
+    projectIdCache.set(connectionId, { projectId, fetchedAt: Date.now() });
+}
+
+/**
  * Fully remove a connection: abort any in-flight fetch and delete its cached project ID.
  * Wire this into your connection close / disconnect lifecycle events to prevent memory leaks.
  *
@@ -158,8 +176,8 @@ export function removeConnection(connectionId) {
 async function fetchProjectId(accessToken, signal) {
     const response = await fetch(CLOUD_CODE_API.loadCodeAssist, {
         method: "POST",
-        headers: { ...LOAD_CODE_ASSIST_HEADERS, "Authorization": `Bearer ${accessToken}` },
-        body: JSON.stringify({ metadata: LOAD_CODE_ASSIST_METADATA }),
+        headers: { ...GEMINI_CLI_LOAD_CODE_ASSIST_HEADERS, "Authorization": `Bearer ${accessToken}` },
+        body: JSON.stringify({ metadata: GEMINI_CLI_LOAD_CODE_ASSIST_METADATA }),
         signal
     });
 
@@ -199,7 +217,7 @@ async function fetchProjectId(accessToken, signal) {
 async function onboardUser(accessToken, tierID, externalSignal) {
     console.log(`[ProjectId] Onboarding user with tier: ${tierID}`);
 
-    const reqBody = { tierId: tierID, metadata: LOAD_CODE_ASSIST_METADATA };
+    const reqBody = { tierId: tierID, metadata: GEMINI_CLI_LOAD_CODE_ASSIST_METADATA };
     const MAX_ATTEMPTS = 5;
 
     for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
@@ -215,7 +233,7 @@ async function onboardUser(accessToken, tierID, externalSignal) {
         try {
             const response = await fetch(CLOUD_CODE_API.onboardUser, {
                 method: "POST",
-                headers: { ...LOAD_CODE_ASSIST_HEADERS, "Authorization": `Bearer ${accessToken}` },
+                headers: { ...GEMINI_CLI_LOAD_CODE_ASSIST_HEADERS, "Authorization": `Bearer ${accessToken}` },
                 body: JSON.stringify(reqBody),
                 signal: localCtrl.signal
             });

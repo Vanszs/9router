@@ -186,3 +186,43 @@ export function getProxyHash(providerSpecificData = {}) {
   if (poolId) return `pool-${djb2(poolId)}`;
   return "direct";
 }
+
+// In-memory counters for round-robin / fill-first proxy pool rotation.
+// Keyed by `${providerId}:${strategy}` so different providers/strategies keep
+// independent cursors; an integer cursor advances per pick. Process-local is
+// sufficient — proxy pool rotation is best-effort, not a hard consistency requirement.
+const _poolCursors = new Map();
+
+/**
+ * Pick a proxy pool id from a list of active pool ids using the configured strategy.
+ *
+ * Strategies:
+ *  - "none" / falsy: returns null (no rotation)
+ *  - "fill-first": always picks the first pool (sticky — drains pool[0] first)
+ *  - "round-robin": advances cursor modulo pool length (fair distribution)
+ *  - "random": uniform random pick
+ *
+ * @param {string[]} poolIds - active proxy pool ids with a proxyUrl
+ * @param {string} strategy - rotation strategy from providerStrategies override
+ * @param {string} providerId - provider id for per-provider cursor isolation
+ * @returns {string|null} chosen pool id, or null when pool is empty / strategy none
+ */
+export function pickProxyPoolId(poolIds, strategy, providerId = "") {
+  if (!Array.isArray(poolIds) || poolIds.length === 0) return null;
+  const strat = String(strategy || "").toLowerCase();
+
+  if (strat === "fill-first") return poolIds[0];
+
+  if (strat === "round-robin") {
+    const key = `${providerId}:${strat}`;
+    const idx = (_poolCursors.get(key) ?? 0) % poolIds.length;
+    _poolCursors.set(key, (idx + 1) % poolIds.length);
+    return poolIds[idx];
+  }
+
+  if (strat === "random") {
+    return poolIds[Math.floor(Math.random() * poolIds.length)];
+  }
+
+  return null;
+}

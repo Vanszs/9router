@@ -89,8 +89,13 @@ export function createSSEStream(options = {}) {
     body = null,
     onStreamComplete = null,
     apiKey = null,
-    normalizeKimiToolCalls = null
+    normalizeKimiToolCalls = null,
+    responseModel = null
   } = options;
+
+  // Echo the client-facing model id (alias or original provider/model) in SSE
+  // chunks instead of the upstream modelVersion. ponytail: fallback to model.
+  const echoModel = responseModel || model;
 
   let buffer = "";
   let usage = null;
@@ -103,7 +108,7 @@ export function createSSEStream(options = {}) {
   // Per-stream decoder with stream:true to correctly handle multi-byte chars split across chunks
   const decoder = new TextDecoder("utf-8", { fatal: false });
 
-  const state = mode === STREAM_MODE.TRANSLATE ? { ...initState(sourceFormat), provider, toolNameMap, model } : null;
+  const state = mode === STREAM_MODE.TRANSLATE ? { ...initState(sourceFormat), provider, toolNameMap, model: echoModel } : null;
 
   let totalContentLength = 0;
   let accumulatedContent = "";
@@ -160,6 +165,9 @@ export function createSSEStream(options = {}) {
               const parsed = JSON.parse(trimmed.slice(5).trim());
 
               const idFixed = fixInvalidId(parsed);
+
+              // Echo the client-facing model id in every chunk.
+              if (echoModel) parsed.model = echoModel;
 
               // Ensure OpenAI-required fields are present on streaming chunks (Letta compat)
               let fieldsInjected = false;
@@ -278,6 +286,9 @@ export function createSSEStream(options = {}) {
 
         const parsed = parseSSELine(trimmed, targetFormat);
         if (!parsed) continue;
+
+        // Echo the client-facing model id in every chunk.
+        if (echoModel) parsed.model = echoModel;
 
         // Responses API same-format passthrough: preserve event framing + track terminal state
         const isOpenAIResponsesStream = targetFormat === FORMATS.OPENAI_RESPONSES;
@@ -411,7 +422,7 @@ export function createSSEStream(options = {}) {
             // chunk so the client sees the correct finish_reason.
             const isFinishChunk = item.type === "message_delta" || item.choices?.[0]?.finish_reason;
             if (kimiToolCalls && isFinishChunk && sourceFormat === FORMATS.OPENAI) {
-              const emitted = emitKimiToolCallsChunk(controller, kimiToolCalls, state, model, sourceFormat, reqLogger);
+              const emitted = emitKimiToolCallsChunk(controller, kimiToolCalls, state, echoModel, sourceFormat, reqLogger);
               if (emitted) {
                 sseEmittedCount++;
                 kimiToolCallsEmitted = true;
@@ -543,7 +554,7 @@ export function createSSEStream(options = {}) {
             content: accumulatedContent,
           });
           if (hasTools) {
-            const emitted = emitKimiToolCallsChunk(controller, normalized.tool_calls, state, model, sourceFormat, reqLogger);
+            const emitted = emitKimiToolCallsChunk(controller, normalized.tool_calls, state, echoModel, sourceFormat, reqLogger);
             if (emitted) {
               sseEmittedCount++;
               kimiToolCallsEmitted = true;
@@ -591,7 +602,7 @@ export function createSSEStream(options = {}) {
   });
 }
 
-export function createSSETransformStreamWithLogger(targetFormat, sourceFormat, provider = null, reqLogger = null, toolNameMap = null, model = null, connectionId = null, body = null, onStreamComplete = null, apiKey = null, normalizeKimiToolCalls = null) {
+export function createSSETransformStreamWithLogger(targetFormat, sourceFormat, provider = null, reqLogger = null, toolNameMap = null, model = null, connectionId = null, body = null, onStreamComplete = null, apiKey = null, normalizeKimiToolCalls = null, responseModel = null) {
   return createSSEStream({
     mode: STREAM_MODE.TRANSLATE,
     targetFormat,
@@ -604,11 +615,12 @@ export function createSSETransformStreamWithLogger(targetFormat, sourceFormat, p
     body,
     onStreamComplete,
     apiKey,
-    normalizeKimiToolCalls
+    normalizeKimiToolCalls,
+    responseModel
   });
 }
 
-export function createPassthroughStreamWithLogger(provider = null, reqLogger = null, model = null, connectionId = null, body = null, onStreamComplete = null, apiKey = null, normalizeKimiToolCalls = null) {
+export function createPassthroughStreamWithLogger(provider = null, reqLogger = null, model = null, connectionId = null, body = null, onStreamComplete = null, apiKey = null, normalizeKimiToolCalls = null, responseModel = null) {
   return createSSEStream({
     mode: STREAM_MODE.PASSTHROUGH,
     provider,
@@ -618,6 +630,7 @@ export function createPassthroughStreamWithLogger(provider = null, reqLogger = n
     body,
     onStreamComplete,
     apiKey,
-    normalizeKimiToolCalls
+    normalizeKimiToolCalls,
+    responseModel
   });
 }

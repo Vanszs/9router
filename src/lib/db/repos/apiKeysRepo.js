@@ -26,6 +26,7 @@ function rowToKey(row) {
     allowedProviders: parsePermList(row.allowedProviders),
     allowedCombos: parsePermList(row.allowedCombos),
     allowedKinds: parsePermList(row.allowedKinds),
+    allowedModels: parsePermList(row.allowedModels),
   };
 }
 
@@ -58,10 +59,11 @@ export async function createApiKey(name, machineId) {
     allowedProviders: null,
     allowedCombos: null,
     allowedKinds: null,
+    allowedModels: null,
   };
   db.run(
-    `INSERT INTO apiKeys(id, key, name, machineId, isActive, createdAt, allowedProviders, allowedCombos, allowedKinds) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [apiKey.id, apiKey.key, apiKey.name, apiKey.machineId, 1, apiKey.createdAt, null, null, null]
+    `INSERT INTO apiKeys(id, key, name, machineId, isActive, createdAt, allowedProviders, allowedCombos, allowedKinds, allowedModels) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [apiKey.id, apiKey.key, apiKey.name, apiKey.machineId, 1, apiKey.createdAt, null, null, null, null]
   );
   return apiKey;
 }
@@ -80,8 +82,9 @@ export async function updateApiKey(id, data) {
     if ("allowedProviders" in data) merged.allowedProviders = data.allowedProviders;
     if ("allowedCombos" in data) merged.allowedCombos = data.allowedCombos;
     if ("allowedKinds" in data) merged.allowedKinds = data.allowedKinds;
+    if ("allowedModels" in data) merged.allowedModels = data.allowedModels;
     db.run(
-      `UPDATE apiKeys SET key = ?, name = ?, machineId = ?, isActive = ?, allowedProviders = ?, allowedCombos = ?, allowedKinds = ? WHERE id = ?`,
+      `UPDATE apiKeys SET key = ?, name = ?, machineId = ?, isActive = ?, allowedProviders = ?, allowedCombos = ?, allowedKinds = ?, allowedModels = ? WHERE id = ?`,
       [
         merged.key,
         merged.name,
@@ -90,6 +93,7 @@ export async function updateApiKey(id, data) {
         serializePermList(merged.allowedProviders),
         serializePermList(merged.allowedCombos),
         serializePermList(merged.allowedKinds),
+        serializePermList(merged.allowedModels),
         id,
       ]
     );

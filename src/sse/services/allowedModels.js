@@ -357,6 +357,23 @@ async function buildAllModelEntries(kindFilter, combos, customModels, modelAlias
     }
   }
 
+  // Bare alias entries: surface user-defined aliases as first-class model ids
+  // (no provider prefix) so /v1/models lists them and isModelAllowed accepts
+  // them. The target model's disabled status is respected — disabled targets
+  // do not get an alias entry. ponytail: no kind filtering — alias.kind is
+  // unknown; /v1/models is untyped and chat resolves via getModelInfo anyway.
+  if (modelAliases && typeof modelAliases === "object") {
+    for (const [aliasName, fullModel] of Object.entries(modelAliases)) {
+      if (typeof aliasName !== "string" || !aliasName.trim()) continue;
+      if (typeof fullModel !== "string" || !fullModel.includes("/")) continue;
+      const slashIdx = fullModel.indexOf("/");
+      const targetAlias = fullModel.slice(0, slashIdx);
+      const targetModelId = fullModel.slice(slashIdx + 1);
+      if (isDisabled && isDisabled(targetAlias, targetModelId)) continue;
+      entries.push({ id: aliasName, object: "model", owned_by: "alias" });
+    }
+  }
+
   return entries;
 }
 
@@ -647,7 +664,16 @@ export function invalidateAllowedModelsCache() {
 }
 
 export async function isModelAllowed(modelStr, apiKeyInfo = null) {
-  if (!apiKeyInfo) return true;
+  // Per-key model ACL (null=all, []=none, [id]=specific). Checked first.
+  if (apiKeyInfo) {
+    const keyModels = apiKeyInfo.allowedModels;
+    if (Array.isArray(keyModels)) {
+      if (keyModels.length === 0) return false;
+      if (!keyModels.includes(modelStr)) return false;
+    }
+  }
+  // Global allowed list always enforced — even when apiKeyInfo is null — so
+  // disabled models and non-existent combos are rejected regardless of auth.
   const allowed = await getAllowedModelIds();
   return allowed.has(modelStr);
 }

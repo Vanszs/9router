@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getComboById, updateCombo, deleteCombo, getComboByName } from "@/lib/localDb";
+import { getComboById, updateCombo, deleteCombo, getComboByName, getComboByAlias } from "@/lib/localDb";
 import { resetComboRotation } from "open-sse/services/combo.js";
 
 // Validate combo name: only a-z, A-Z, 0-9, -, _
@@ -40,6 +40,20 @@ export async function PUT(request, { params }) {
         return NextResponse.json({ error: "Combo name already exists" }, { status: 400 });
       }
     }
+
+    // Validate alias format if provided
+    const cleanAlias = body.alias != null ? String(body.alias).trim() || null : undefined;
+    if (cleanAlias !== undefined && cleanAlias && !VALID_NAME_REGEX.test(cleanAlias)) {
+      return NextResponse.json({ error: "Alias can only contain letters, numbers, -, _ and ." }, { status: 400 });
+    }
+    // Check if alias already taken by another combo
+    if (cleanAlias) {
+      const aliasOwner = await getComboByAlias(cleanAlias);
+      if (aliasOwner && aliasOwner.id !== id) {
+        return NextResponse.json({ error: `Alias "${cleanAlias}" already used by combo "${aliasOwner.name}"` }, { status: 409 });
+      }
+    }
+    if (cleanAlias !== undefined) body.alias = cleanAlias;
     
     // Capture previous name to invalidate rotation state on rename
     const prev = await getComboById(id);
