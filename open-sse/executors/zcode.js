@@ -45,7 +45,7 @@ async function solveCaptcha(log) {
     try {
       browser = await chromium.launch({
         headless: true,
-        executablePath: "/home/vanszs/.cache/ms-playwright/chromium-1228/chrome-linux64/chrome",
+        executablePath: process.env.VANS_ZCODE_CHROMIUM_PATH || undefined,
         args: ["--no-sandbox", "--disable-dev-shm-usage", "--disable-blink-features=AutomationControlled", "--disable-features=IsolateOrigins,site-per-process", "--window-size=1280,720"],
         ignoreDefaultArgs: ["--enable-automation"],
       });
