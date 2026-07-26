@@ -86,7 +86,7 @@ async function tryDedicatedProvider({ provider, providerConfig, body, credential
   };
 
   // In-process free search (no HTTP upstream). Used by DuckDuckGo.
-  if (providerConfig.executor === "duckduckgo" || provider.id === "duckduckgo") {
+  if (providerConfig.executor === "duckduckgo") {
     const remaining = GLOBAL_TIMEOUT_MS - (Date.now() - globalStartTime);
     const timeout = Math.min(providerConfig.timeoutMs || 12000, Math.max(remaining, 1000));
     const controller = new AbortController();

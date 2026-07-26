@@ -442,13 +442,6 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
     const isJsonMode =
       body?.response_format?.type === "json_schema" ||
       body?.response_format?.type === "json_object";
-    const bodyHasReasoning =
-      body?.reasoning != null ||
-      body?.reasoning_effort != null ||
-      body?.thinking != null ||
-      body?.include_reasoning != null ||
-      body?.extra_body?.google?.thinking_config != null ||
-      body?.extra_body?.google?.thinkingConfig != null;
     const chatBody = { ...body, model: `${provider}/${model}` };
     // Web search: Google grounding for gemini-cli/vertex only (auto-enable when toggled on,
     // no client tools, no JSON schema output — provider rejects tools + googleSearch combo).
