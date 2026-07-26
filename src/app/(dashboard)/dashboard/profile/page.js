@@ -20,7 +20,7 @@ function getLocaleFromCookie() {
 }
 
 export default function ProfilePage() {
-  const { theme, setTheme, isDark } = useTheme();
+  const { theme, setTheme } = useTheme();
   const [locale, setLocale] = useState("en");
   const [langOpen, setLangOpen] = useState(false);
   const [shutdownOpen, setShutdownOpen] = useState(false);
@@ -29,6 +29,7 @@ export default function ProfilePage() {
   const [loading, setLoading] = useState(true);
   const [systemPromptDraft, setSystemPromptDraft] = useState("");
   const [systemPromptSaving, setSystemPromptSaving] = useState(false);
+  const [systemPromptStatus, setSystemPromptStatus] = useState({ type: "", message: "" });
   const [passwords, setPasswords] = useState({ current: "", new: "", confirm: "" });
   const [passStatus, setPassStatus] = useState({ type: "", message: "" });
   const [passLoading, setPassLoading] = useState(false);
@@ -1113,6 +1114,7 @@ export default function ProfilePage() {
                 disabled={loading || systemPromptSaving}
                 onClick={async () => {
                   setSystemPromptSaving(true);
+                  setSystemPromptStatus({ type: "", message: "" });
                   try {
                     const res = await fetch("/api/settings", {
                       method: "PATCH",
@@ -1122,8 +1124,12 @@ export default function ProfilePage() {
                     if (res.ok) {
                       const data = await res.json();
                       setSettings((prev) => ({ ...prev, systemPrompt: data.systemPrompt ?? "" }));
+                    } else {
+                      setSystemPromptStatus({ type: "error", message: "Failed to save system prompt" });
                     }
-                  } catch { /* ignore */ } finally {
+                  } catch (err) {
+                    setSystemPromptStatus({ type: "error", message: err?.message || "Network error" });
+                  } finally {
                     setSystemPromptSaving(false);
                   }
                 }}
@@ -1131,6 +1137,11 @@ export default function ProfilePage() {
                 Save
               </Button>
             </div>
+            {systemPromptStatus.message && (
+              <p className={`text-xs sm:text-sm ${systemPromptStatus.type === "error" ? "text-red-500" : "text-green-500"}`}>
+                {systemPromptStatus.message}
+              </p>
+            )}
           </div>
         </Card>
 
