@@ -12,16 +12,27 @@ const PRIVILEGED_USER_ID_ENABLED =
   ["1", "true", "yes", "on"].includes(String(process.env.VANS_GEMINI_INCLUDE_PRIVILEGED_USER_ID || "").toLowerCase());
 
 let _privilegedUserIdCache = null;
+let _privilegedUserIdPromise = null;
 async function resolvePrivilegedUserId() {
   if (!PRIVILEGED_USER_ID_ENABLED) return null;
   if (_privilegedUserIdCache) return _privilegedUserIdCache;
-  try {
-    _privilegedUserIdCache = await getConsistentMachineId("gemini-cli-privileged-user-id");
-  } catch {
-    _privilegedUserIdCache = null;
-  }
-  return _privilegedUserIdCache;
+  if (_privilegedUserIdPromise) return _privilegedUserIdPromise;
+  _privilegedUserIdPromise = (async () => {
+    try {
+      const id = await getConsistentMachineId("gemini-cli-privileged-user-id");
+      _privilegedUserIdCache = id || "";
+      return _privilegedUserIdCache;
+    } catch {
+      _privilegedUserIdCache = "";
+      return "";
+    } finally {
+      _privilegedUserIdPromise = null;
+    }
+  })();
+  return _privilegedUserIdPromise;
 }
+
+if (PRIVILEGED_USER_ID_ENABLED) resolvePrivilegedUserId().catch(() => {});
 
 // OpenAI / client fields that must never reach Cloud Code Assist (400 Unknown name).
 const OPENAI_LEAK_FIELDS = [
@@ -35,7 +46,6 @@ function stripOpenAILeakFields(obj) {
   if (!obj || typeof obj !== "object") return;
   for (const k of OPENAI_LEAK_FIELDS) delete obj[k];
 }
-
 // Translate include_reasoning (visible reasoning default) into Gemini's native
 // includeThoughts flag. Lives in generationConfig.thinkingConfig so it traverses
 // the Cloud Code Assist envelope correctly. When thinkingConfig already has
@@ -102,32 +112,21 @@ export class GeminiCLIExecutor extends BaseExecutor {
     return headers;
   }
 
-  transformRequest(model, body, stream, credentials) {
-    // Store model for use in buildHeaders (called by base.execute after transformRequest)
+  async transformRequest(model, body, stream, credentials) {
     this._currentModel = model;
-    // Kick off privileged-user-id resolution in the background (no await). By the
-    // second request the cache is warm; the first request simply skips the header.
-    if (PRIVILEGED_USER_ID_ENABLED && _privilegedUserIdCache === null) {
-      resolvePrivilegedUserId().then(v => { _privilegedUserIdCache = v ?? ""; }).catch(() => {});
+    if (PRIVILEGED_USER_ID_ENABLED) {
+      const v = await resolvePrivilegedUserId();
+      _privilegedUserIdCache = v ?? "";
     }
-    // Cloud Code Assist wraps the Gemini payload: { project, model, request: <body> }
-    const isEnvelope = body && body.request && body.model;
+    const work = structuredClone(body);
+    const isEnvelope = work && work.request && work.model;
     if (isEnvelope) {
-      // Gemini 3 rejects replayed turns where a functionCall part has no thoughtSignature,
-      // and rejects thought-only parts (thought=true with no text/functionCall). Clients
-      // (Claude Code, IDE) don't persist thoughtSignature in their history, so we scrub
-      // thought-only parts and backfill the canonical signature on bare functionCall parts.
-      // Also normalize `parameters` → `parametersJsonSchema` (translator already does this for
-      // OpenAI→CLI, but native/passthrough bodies may still carry the legacy field).
-      const request = body.request;
+      const request = work.request;
       if (Array.isArray(request.contents)) {
         for (const turn of request.contents) {
           if (!Array.isArray(turn.parts)) continue;
-          // Drop thought-only parts: assistant reasoning echo can't be replayed to Cloud Code
-          // and triggers a 400 with "thought part without matching functionCall".
           turn.parts = turn.parts.filter(p => !(p?.thought === true && !p.text && !p.functionCall));
         }
-        // Backfill thoughtSignature on functionCall parts missing it (Gemini 3 requirement).
         const needsBackfill = request.contents.some(turn =>
           Array.isArray(turn?.parts) && turn.parts.some(p => p?.functionCall && !p?.thoughtSignature)
         );
@@ -153,27 +152,23 @@ export class GeminiCLIExecutor extends BaseExecutor {
           }
         }
       }
-      // chatCore may re-inject OpenAI-only fields (reasoning_effort, thinking, …)
-      // onto the translated envelope. Cloud Code rejects unknown top-level keys.
-      stripOpenAILeakFields(body);
-      if (body.request && typeof body.request === "object") {
-        stripOpenAILeakFields(body.request);
-        // user_prompt_id is not a v1internal request field — drop if present.
-        delete body.request.user_prompt_id;
+      stripOpenAILeakFields(work);
+      if (work.request && typeof work.request === "object") {
+        stripOpenAILeakFields(work.request);
+        delete work.request.user_prompt_id;
       }
-      applyIncludeReasoningToGemini(body);
-      delete body.include_reasoning;
-      return body;
+      applyIncludeReasoningToGemini(work);
+      delete work.include_reasoning;
+      return work;
     }
 
-    // Strip reasoning_effort and other non-standard fields that Google rejects
-    stripOpenAILeakFields(body);
-    applyIncludeReasoningToGemini(body);
-    delete body.include_reasoning;
+    stripOpenAILeakFields(work);
+    applyIncludeReasoningToGemini(work);
+    delete work.include_reasoning;
     return {
-      project: credentials?.projectId || body?.project,
+      project: credentials?.projectId || work?.project,
       model,
-      request: body
+      request: work
     };
   }
 
