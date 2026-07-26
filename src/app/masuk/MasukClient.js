@@ -3,6 +3,7 @@
 import { useState, useEffect, useReducer } from "react";
 import { Card, Button, Input } from "@/shared/components";
 import { useRouter } from "next/navigation";
+import { translate } from "@/i18n/runtime";
 
 function handleOidcLogin() {
   window.location.href = "/api/auth/oidc/start";
@@ -25,7 +26,7 @@ export default function MasukClient({ initialAuth }) {
   const hasPassword = initialAuth?.hasPassword ?? null;
   const authMode = initialAuth?.authMode || "password";
   const oidcConfigured = initialAuth?.oidcConfigured || false;
-  const oidcLoginLabel = initialAuth?.oidcLoginLabel || "Masuk dengan OIDC";
+  const oidcLoginLabel = initialAuth?.oidcLoginLabel || translate("Sign in with OIDC");
   const router = useRouter();
 
   useEffect(() => {
@@ -64,10 +65,10 @@ export default function MasukClient({ initialAuth }) {
         return;
       } else {
         const data = await res.json();
-        dispatch({ type: "ERROR", error: data.error || "Invalid password", resetHint: data.resetHint, retryAfter: data.retryAfter ? Number(data.retryAfter) : 0 });
+        dispatch({ type: "ERROR", error: data.error || translate("Invalid password"), resetHint: data.resetHint, retryAfter: data.retryAfter ? Number(data.retryAfter) : 0 });
       }
     } catch (err) {
-      dispatch({ type: "ERROR", error: "Something went wrong. Please try again." });
+      dispatch({ type: "ERROR", error: translate("Something went wrong. Please try again.") });
     }
   };
 
@@ -135,7 +136,7 @@ export default function MasukClient({ initialAuth }) {
                   <Input
                     id="masuk-password"
                     type="password"
-                    placeholder="Enter password"
+                    placeholder={translate("Enter password")}
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
                     required
@@ -161,7 +162,7 @@ export default function MasukClient({ initialAuth }) {
                   loading={loading}
                   disabled={retryAfter > 0}
                 >
-                  {retryAfter > 0 ? `Wait ${retryAfter}s` : "Sign in"}
+                  {retryAfter > 0 ? `${translate("Wait")} ${retryAfter}s` : translate("Sign in")}
                 </Button>
 
                 <p className="text-xs text-center text-text-muted mt-2">
