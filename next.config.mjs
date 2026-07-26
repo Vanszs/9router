@@ -9,15 +9,17 @@ const tracingRoot = process.env.NEXT_TRACING_ROOT_MODE === "workspace"
   ? join(projectRoot, "..")
   : projectRoot;
 const proxyClientMaxBodySize = process.env.NINEROUTER_PROXY_CLIENT_MAX_BODY_SIZE || "128mb";
+// Comma-separated dev origins override (Next 16 dev-only field, ignored in prod).
+//   VANS_ALLOWED_DEV_ORIGINS=127.0.0.1,localhost,my-host
+const allowedDevOrigins = process.env.VANS_ALLOWED_DEV_ORIGINS
+  ? process.env.VANS_ALLOWED_DEV_ORIGINS.split(",").map((s) => s.trim()).filter(Boolean)
+  : ["127.0.0.1", "localhost"];
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   distDir: process.env.NEXT_DIST_DIR || ".next",
   output: "standalone",
-  // Dev-only: allow HMR / static chunks when the browser hits 127.0.0.1
-  // while the server is bound to 0.0.0.0 (or vice versa). Without this,
-  // Next 16 blocks cross-origin /_next/* and the UI freezes after login.
-  allowedDevOrigins: ["127.0.0.1", "localhost"],
+  allowedDevOrigins,
   serverExternalPackages: ["better-sqlite3", "sql.js", "node:sqlite", "bun:sqlite", "dompurify", "chalk"],
   turbopack: {
     root: tracingRoot
