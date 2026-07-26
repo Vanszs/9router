@@ -1,9 +1,7 @@
 import { NextResponse } from "next/server";
 import { getComboById, updateCombo, deleteCombo, getComboByName, getComboByAlias } from "@/lib/localDb";
 import { resetComboRotation } from "open-sse/services/combo.js";
-
-// Validate combo name: only a-z, A-Z, 0-9, -, _
-const VALID_NAME_REGEX = /^[a-zA-Z0-9_.\-]+$/;
+import { COMBO_NAME_REGEX, COMBO_NAME_HINT, COMBO_ALIAS_HINT } from "@/shared/constants/comboValidation.js";
 
 // GET /api/combos/[id] - Get combo by ID
 export async function GET(request, { params }) {
@@ -17,7 +15,7 @@ export async function GET(request, { params }) {
     
     return NextResponse.json(combo);
   } catch (error) {
-    console.log("Error fetching combo:", error);
+    console.error("Error fetching combo:", error);
     return NextResponse.json({ error: "Failed to fetch combo" }, { status: 500 });
   }
 }
@@ -30,8 +28,8 @@ export async function PUT(request, { params }) {
     
     // Validate name format if provided
     if (body.name) {
-      if (!VALID_NAME_REGEX.test(body.name)) {
-        return NextResponse.json({ error: "Name can only contain letters, numbers, -, _ and ." }, { status: 400 });
+      if (!COMBO_NAME_REGEX.test(body.name)) {
+        return NextResponse.json({ error: COMBO_NAME_HINT }, { status: 400 });
       }
       
       // Check if name already exists (exclude current combo)
@@ -43,8 +41,8 @@ export async function PUT(request, { params }) {
 
     // Validate alias format if provided
     const cleanAlias = body.alias != null ? String(body.alias).trim() || null : undefined;
-    if (cleanAlias !== undefined && cleanAlias && !VALID_NAME_REGEX.test(cleanAlias)) {
-      return NextResponse.json({ error: "Alias can only contain letters, numbers, -, _ and ." }, { status: 400 });
+    if (cleanAlias !== undefined && cleanAlias && !COMBO_NAME_REGEX.test(cleanAlias)) {
+      return NextResponse.json({ error: COMBO_ALIAS_HINT }, { status: 400 });
     }
     // Check if alias already taken by another combo
     if (cleanAlias) {
@@ -69,7 +67,7 @@ export async function PUT(request, { params }) {
 
     return NextResponse.json(combo);
   } catch (error) {
-    console.log("Error updating combo:", error);
+    console.error("Error updating combo:", error);
     return NextResponse.json({ error: "Failed to update combo" }, { status: 500 });
   }
 }
@@ -91,7 +89,7 @@ export async function DELETE(request, { params }) {
     
     return NextResponse.json({ success: true });
   } catch (error) {
-    console.log("Error deleting combo:", error);
+    console.error("Error deleting combo:", error);
     return NextResponse.json({ error: "Failed to delete combo" }, { status: 500 });
   }
 }

@@ -1,10 +1,8 @@
 import { NextResponse } from "next/server";
 import { getCombos, createCombo, getComboByName, getComboByAlias } from "@/lib/localDb";
+import { COMBO_NAME_REGEX, COMBO_NAME_HINT, COMBO_ALIAS_HINT } from "@/shared/constants/comboValidation.js";
 
 export const dynamic = "force-dynamic";
-
-// Validate combo name: only a-z, A-Z, 0-9, -, _
-const VALID_NAME_REGEX = /^[a-zA-Z0-9_.\-]+$/;
 
 // GET /api/combos - Get all combos
 export async function GET() {
@@ -12,7 +10,7 @@ export async function GET() {
     const combos = await getCombos();
     return NextResponse.json({ combos });
   } catch (error) {
-    console.log("Error fetching combos:", error);
+    console.error("Error fetching combos:", error);
     return NextResponse.json({ error: "Failed to fetch combos" }, { status: 500 });
   }
 }
@@ -28,14 +26,14 @@ export async function POST(request) {
     }
 
     // Validate name format
-    if (!VALID_NAME_REGEX.test(name)) {
-      return NextResponse.json({ error: "Name can only contain letters, numbers, -, _ and ." }, { status: 400 });
+    if (!COMBO_NAME_REGEX.test(name)) {
+      return NextResponse.json({ error: COMBO_NAME_HINT }, { status: 400 });
     }
 
     // Validate alias format if provided
     const cleanAlias = alias?.trim() || null;
-    if (cleanAlias && !VALID_NAME_REGEX.test(cleanAlias)) {
-      return NextResponse.json({ error: "Alias can only contain letters, numbers, -, _ and ." }, { status: 400 });
+    if (cleanAlias && !COMBO_NAME_REGEX.test(cleanAlias)) {
+      return NextResponse.json({ error: COMBO_ALIAS_HINT }, { status: 400 });
     }
 
     // Check if name already exists
@@ -56,7 +54,7 @@ export async function POST(request) {
 
     return NextResponse.json(combo, { status: 201 });
   } catch (error) {
-    console.log("Error creating combo:", error);
+    console.error("Error creating combo:", error);
     return NextResponse.json({ error: "Failed to create combo" }, { status: 500 });
   }
 }
