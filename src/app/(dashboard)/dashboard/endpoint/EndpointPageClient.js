@@ -523,7 +523,7 @@ export default function APIPageClient({ machineId }) {
         const res = await fetch("/api/models", { cache: "no-store" });
         if (res.ok) {
           const data = await res.json();
-          const list = Array.isArray(data.models) ? data.models : (Array.isArray(data) ? data : []);
+          const list = Array.isArray(data?.models) ? data.models : [];
           setAllModelsCatalog(list.map((m) => ({
             id: m.id || `${m.provider}/${m.model}`,
             provider: m.provider || (m.id || "").split("/")[0],
@@ -1585,7 +1585,7 @@ export default function APIPageClient({ machineId }) {
                       {key.allowedProviders && (
                         <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-500 dark:bg-blue-500/20" title={key.allowedProviders.join(", ")}>
                           {key.allowedProviders.length === 0
-                            ? "no providers"
+                            ? "No providers"
                             : key.allowedProviders.map((stored) => {
                                 // Try providerList first (has connections)
                                 const p = providerList.find((pp) => pp.id === stored || pp.alias === stored || pp.prefix === stored);
