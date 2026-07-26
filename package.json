@@ -26,7 +26,6 @@
     "@next/env": "^16.1.6",
     "@next/third-parties": "^16.2.9",
     "@swc/helpers": "^0.5.15",
-    "@tailwindcss/oxide-wasm32-wasi": "4.3.0",
     "@xyflow/react": "^12.10.1",
     "bcryptjs": "^3.0.3",
     "confbox": "^0.2.4",
@@ -57,9 +56,9 @@
     "zustand": "^5.0.10"
   },
   "optionalDependencies": {
-    "better-sqlite3": "^12.6.2"
+    "better-sqlite3": "^12.6.2",
+    "@tailwindcss/oxide-wasm32-wasi": "^4.3.3"
   },
-  "comment_better_sqlite3": "kept in optionalDependencies so npm install doesn't fail on systems without build tools — sql.js is used as fallback at runtime",
   "devDependencies": {
     "@tailwindcss/postcss": "^4.1.18",
     "eslint": "^9",
