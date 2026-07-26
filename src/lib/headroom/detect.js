@@ -28,6 +28,12 @@ let _binCache = undefined;
 let _pyCache = undefined;
 let _extrasCache = undefined;
 
+export function invalidateHeadroomCaches() {
+  _binCache = undefined;
+  _pyCache = undefined;
+  _extrasCache = undefined;
+}
+
 // Extra bin dirs often missing from a packaged/launchd PATH (Python installs headroom here).
 const EXTRA_BINS = IS_WIN
   ? [
