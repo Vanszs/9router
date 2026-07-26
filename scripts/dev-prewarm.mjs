@@ -2,7 +2,11 @@ import { setTimeout as sleep } from "node:timers/promises";
 
 const PORT = process.env.PORT || 20127;
 const HOST = process.env.HOST || "127.0.0.1";
-const PASSWORD = process.env.VANS_PREWARM_PASSWORD || "123456";
+const PASSWORD = process.env.VANS_PREWARM_PASSWORD;
+if (!PASSWORD) {
+  console.error("VANS_PREWARM_PASSWORD is required (set it to the dashboard password)");
+  process.exit(1);
+}
 const base = `http://${HOST}:${PORT}`;
 
 const publicPaths = ["/", "/login", "/api/auth/status"];
