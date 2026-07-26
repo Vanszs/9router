@@ -11,7 +11,7 @@ export async function GET(request, { params }) {
     }
     return NextResponse.json({ key });
   } catch (error) {
-    console.log("Error fetching key:", error);
+    console.error("Error fetching key:", error);
     return NextResponse.json({ error: "Failed to fetch key" }, { status: 500 });
   }
 }
@@ -32,22 +32,22 @@ export async function PUT(request, { params }) {
     if (isActive !== undefined) updateData.isActive = isActive;
     // null = all allowed, [] = none, [x] = specific. Only update if key present in body.
     if ("allowedProviders" in body) {
-      updateData.allowedProviders = allowedProviders === null ? null : (Array.isArray(allowedProviders) ? allowedProviders : null);
+      updateData.allowedProviders = allowedProviders === null ? null : (Array.isArray(allowedProviders) ? allowedProviders : []);
     }
     if ("allowedCombos" in body) {
-      updateData.allowedCombos = allowedCombos === null ? null : (Array.isArray(allowedCombos) ? allowedCombos : null);
+      updateData.allowedCombos = allowedCombos === null ? null : (Array.isArray(allowedCombos) ? allowedCombos : []);
     }
     if ("allowedKinds" in body) {
-      updateData.allowedKinds = allowedKinds === null ? null : (Array.isArray(allowedKinds) ? allowedKinds : null);
+      updateData.allowedKinds = allowedKinds === null ? null : (Array.isArray(allowedKinds) ? allowedKinds : []);
     }
     if ("allowedModels" in body) {
-      updateData.allowedModels = allowedModels === null ? null : (Array.isArray(allowedModels) ? allowedModels : null);
+      updateData.allowedModels = allowedModels === null ? null : (Array.isArray(allowedModels) ? allowedModels : []);
     }
 
     const updated = await updateApiKey(id, updateData);
     return NextResponse.json({ key: updated });
   } catch (error) {
-    console.log("Error updating key:", error);
+    console.error("Error updating key:", error);
     return NextResponse.json({ error: "Failed to update key" }, { status: 500 });
   }
 }
@@ -64,7 +64,7 @@ export async function DELETE(request, { params }) {
 
     return NextResponse.json({ message: "Key deleted successfully" });
   } catch (error) {
-    console.log("Error deleting key:", error);
+    console.error("Error deleting key:", error);
     return NextResponse.json({ error: "Failed to delete key" }, { status: 500 });
   }
 }
