@@ -44,6 +44,7 @@ const DEFAULT_SETTINGS = {
   cavemanLevel: "full",
   ponytailEnabled: false,
   ponytailLevel: "full",
+  systemPrompt: "",
 };
 
 async function readRaw() {

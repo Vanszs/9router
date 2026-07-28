@@ -157,7 +157,6 @@ export async function POST(request) {
 
     const orgSlug = orgDomain.split(".")[0];
     const deployUrl = `https://${projectName}.${orgSlug}.deno.net`;
-    console.log("Deno deployUrl:", deployUrl);
 
     const proxyPool = await createProxyPool({
       name: projectName,

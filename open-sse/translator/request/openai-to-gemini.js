@@ -239,23 +239,25 @@ export function openaiToGeminiRequest(model, body, stream) {
 // OpenAI -> Gemini CLI (Cloud Code Assist)
 export function openaiToGeminiCLIRequest(model, body, stream) {
   const gemini = openaiToGeminiBase(model, body, stream, DEFAULT_THINKING_GEMINI_CLI_SIGNATURE);
+
+  // Carry Google-native web search flag through to the envelope builder.
+  if (body.web_search === true || body.webSearch === true || body.extra_body?.google?.web_search === true) {
+    gemini._googleWebSearch = true;
+  }
   // Thinking is normalized centrally by applyThinking (thinkingUnified.js) after translation.
 
-  // Clean schema for tools
-  if (gemini.tools?.[0]?.functionDeclarations) {
-    for (const fn of gemini.tools[0].functionDeclarations) {
-      if (fn.parameters) {
-        const cleanedSchema = cleanJSONSchemaForAntigravity(fn.parameters);
-        fn.parameters = cleanedSchema;
-        // if (isClaude) {
-        //   fn.parameters = cleanedSchema;
-        // } else {
-        //   fn.parametersJsonSchema = cleanedSchema;
-        //   delete fn.parameters;
-        // }
-      }
+// Cloud Code Assist requires parametersJsonSchema (not parameters). The "parameters"
+// alias is silently accepted by the API but ignored in VALIDATED mode, so tool args
+// lose their names/schema enforcement and some calls come back with empty args.
+if (gemini.tools?.[0]?.functionDeclarations) {
+  for (const fn of gemini.tools[0].functionDeclarations) {
+    if (fn.parameters) {
+      const cleanedSchema = cleanJSONSchemaForAntigravity(fn.parameters);
+      fn.parametersJsonSchema = cleanedSchema;
+      delete fn.parameters;
     }
   }
+}
 
   return gemini;
 }
@@ -264,6 +266,9 @@ export function openaiToGeminiCLIRequest(model, body, stream) {
 function wrapInCloudCodeEnvelope(model, geminiCLI, credentials = null, isAntigravity = false) {
   const projectId = credentials?.projectId || generateProjectId();
 
+  // Cloud Code Assist v1internal generateContent accepts only a fixed set of
+  // request fields. Extra keys (e.g. user_prompt_id) are rejected with 400
+  // "Unknown name ... Cannot find field". Keep the request payload strict.
   const envelope = {
     project: projectId,
     model: model,
@@ -290,6 +295,14 @@ function wrapInCloudCodeEnvelope(model, geminiCLI, credentials = null, isAntigra
     envelope.request.toolConfig = {
       functionCallingConfig: { mode: "VALIDATED" }
     };
+  }
+
+  // Google-native web search: inject {googleSearch: {}} as a separate tools
+  // entry so Gemini's own grounding search runs alongside function tools.
+  // The flag is set when the user enables Web Search for this provider.
+  if (geminiCLI._googleWebSearch) {
+    if (!envelope.request.tools) envelope.request.tools = [];
+    envelope.request.tools.push({ googleSearch: {} });
   }
 
   return envelope;

@@ -291,17 +291,8 @@ export async function handleForcedSSEToJson({ providerResponse, sourceFormat, pr
       status: "success"
     }, { endpoint: clientRawRequest?.endpoint || null })).catch(() => {});
 
-    // Strip reasoning_content only when content is non-empty.
-    // When content is empty (e.g. thinking models that used all tokens for reasoning),
-    // reasoning_content is the only useful output and must be preserved.
-    // Previously this was unconditional, which broke Qwen3.5, Claude extended thinking, etc.
-    if (parsed?.choices) {
-      for (const choice of parsed.choices) {
-        if (choice?.message?.reasoning_content && choice.message.content) {
-          delete choice.message.reasoning_content;
-        }
-      }
-    }
+    // Preserve reasoning_content alongside content. Stripping it when content was
+    // present hid thinking output for NIM and other OpenAI-compatible reasoners.
 
     // Reverse conversion: OpenAI → Claude when client sent Claude-format request
     // (relayn provider path: request was translated CLAUDE→OPENAI upstream,

@@ -29,7 +29,11 @@ export async function GET() {
     const allModels = json.data || [];
 
     const freeModels = allModels.reduce((acc, m) => {
-      if (m.isFree === true) acc.push({ id: m.id, name: m.name, isFree: true, context_length: m.context_length || 0 });
+      // Kilo API proxies OpenRouter catalog — free models have pricing.prompt/completion === "0".
+      // Also check legacy isFree boolean for forward compatibility.
+      const isFree = m.isFree === true ||
+        (m.pricing?.prompt === "0" && m.pricing?.completion === "0");
+      if (isFree) acc.push({ id: m.id, name: m.name, isFree: true, context_length: m.context_length || 0 });
       return acc;
     }, []);
 

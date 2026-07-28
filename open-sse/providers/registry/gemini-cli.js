@@ -21,8 +21,8 @@ export default {
   transport: {
     baseUrl: "https://cloudcode-pa.googleapis.com/v1internal",
     format: "gemini-cli",
-    cliVersion: "0.34.0",
-    apiClient: "google-genai-sdk/1.41.0 gl-node/v22.19.0",
+    cliVersion: "0.44.0",
+    apiClient: "gl-node/26.1.0",
     usage: {
       quotaUrl: "https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuota",
       loadCodeAssistUrl: "https://cloudcode-pa.googleapis.com/v1internal:loadCodeAssist",

@@ -20,13 +20,16 @@ function getLocaleFromCookie() {
 }
 
 export default function ProfilePage() {
-  const { theme, setTheme, isDark } = useTheme();
+  const { theme, setTheme } = useTheme();
   const [locale, setLocale] = useState("en");
   const [langOpen, setLangOpen] = useState(false);
   const [shutdownOpen, setShutdownOpen] = useState(false);
   const [isShuttingDown, setIsShuttingDown] = useState(false);
   const [settings, setSettings] = useState({ fallbackStrategy: "fill-first" });
   const [loading, setLoading] = useState(true);
+  const [systemPromptDraft, setSystemPromptDraft] = useState("");
+  const [systemPromptSaving, setSystemPromptSaving] = useState(false);
+  const [systemPromptStatus, setSystemPromptStatus] = useState({ type: "", message: "" });
   const [passwords, setPasswords] = useState({ current: "", new: "", confirm: "" });
   const [passStatus, setPassStatus] = useState({ type: "", message: "" });
   const [passLoading, setPassLoading] = useState(false);
@@ -70,6 +73,7 @@ export default function ProfilePage() {
       .then((res) => res.json())
       .then((data) => {
         setSettings(data);
+        setSystemPromptDraft(data?.systemPrompt || "");
         setOidcForm({
           authMode: data?.authMode || "password",
           oidcIssuerUrl: data?.oidcIssuerUrl || "",
@@ -1076,6 +1080,66 @@ export default function ProfilePage() {
             {proxyStatus.message && (
               <p className={`text-xs sm:text-sm ${proxyStatus.type === "error" ? "text-red-500" : "text-green-500"} pt-2 border-t border-border/50`}>
                 {proxyStatus.message}
+              </p>
+            )}
+          </div>
+        </Card>
+
+        {/* System Prompt */}
+        <Card>
+          <div className="flex items-center gap-3 mb-4">
+            <div className="p-2 rounded-lg bg-teal-500/10 text-teal-500 shrink-0">
+              <span className="material-symbols-outlined text-[20px]">smart_toy</span>
+            </div>
+            <h3 className="text-base sm:text-lg font-semibold">Default System Prompt</h3>
+          </div>
+          <div className="flex flex-col gap-3">
+            <p className="text-xs sm:text-sm text-text-muted">
+              Optional. This text is prepended to the system message of every chat request
+              that does not already carry one. Leave empty to disable.
+            </p>
+            <textarea
+              className="font-mono text-sm min-h-[120px] rounded-md border border-border bg-background px-3 py-2 focus:border-primary focus:outline-none resize-y"
+              placeholder="e.g. You are a helpful assistant. Always answer concisely."
+              value={systemPromptDraft}
+              onChange={(e) => setSystemPromptDraft(e.target.value)}
+              disabled={loading}
+              spellCheck={false}
+            />
+            <div className="flex justify-end">
+              <Button
+                type="button"
+                variant="primary"
+                loading={systemPromptSaving}
+                disabled={loading || systemPromptSaving}
+                onClick={async () => {
+                  setSystemPromptSaving(true);
+                  setSystemPromptStatus({ type: "", message: "" });
+                  try {
+                    const res = await fetch("/api/settings", {
+                      method: "PATCH",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ systemPrompt: systemPromptDraft }),
+                    });
+                    if (res.ok) {
+                      const data = await res.json();
+                      setSettings((prev) => ({ ...prev, systemPrompt: data.systemPrompt ?? "" }));
+                    } else {
+                      setSystemPromptStatus({ type: "error", message: "Failed to save system prompt" });
+                    }
+                  } catch (err) {
+                    setSystemPromptStatus({ type: "error", message: err?.message || "Network error" });
+                  } finally {
+                    setSystemPromptSaving(false);
+                  }
+                }}
+              >
+                Save
+              </Button>
+            </div>
+            {systemPromptStatus.message && (
+              <p className={`text-xs sm:text-sm ${systemPromptStatus.type === "error" ? "text-red-500" : "text-green-500"}`}>
+                {systemPromptStatus.message}
               </p>
             )}
           </div>

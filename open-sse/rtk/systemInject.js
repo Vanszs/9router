@@ -6,6 +6,61 @@ import { FORMATS } from "../translator/formats.js";
 
 const SEP = "\n\n";
 
+/**
+ * Detect whether a request body already carries a system message/prompt so the
+ * chat handler knows when NOT to inject a default. Detects every shape we
+ * support across OpenAI/Claude/Gemini/Responses. Returns true when any system
+ * slot already has non-empty text.
+ */
+export function hasSystemPrompt(body, format) {
+  if (!body) return false;
+
+  switch (format) {
+    case FORMATS.CLAUDE: {
+      if (typeof body.system === "string") return body.system.trim().length > 0;
+      if (Array.isArray(body.system)) {
+        return body.system.some(b => b?.type === "text" && typeof b.text === "string" && b.text.trim().length > 0);
+      }
+      return false;
+    }
+    case FORMATS.GEMINI:
+    case FORMATS.GEMINI_CLI:
+    case FORMATS.VERTEX:
+    case FORMATS.ANTIGRAVITY: {
+      const target = body.request && typeof body.request === "object" ? body.request : body;
+      const sys = target?.system_instruction ?? target?.systemInstruction;
+      if (sys && Array.isArray(sys.parts)) {
+        return sys.parts.some(p => typeof p?.text === "string" && p.text.trim().length > 0);
+      }
+      return false;
+    }
+    default: {
+      // OpenAI Responses API
+      if (typeof body.instructions === "string" && body.instructions.trim().length > 0) return true;
+      const arr = Array.isArray(body.messages) ? body.messages : Array.isArray(body.input) ? body.input : null;
+      if (!arr) return false;
+      return arr.some(m => m && (m.role === "system" || m.role === "developer") && hasOpenAIMessageContent(m));
+    }
+  }
+}
+
+function hasOpenAIMessageContent(msg) {
+  const c = msg?.content;
+  if (typeof c === "string") return c.trim().length > 0;
+  if (Array.isArray(c)) return c.some(p => (p?.type === "input_text" || p?.type === "text") && typeof p.text === "string" && p.text.trim().length > 0);
+  return false;
+}
+
+/**
+ * Inject the default system prompt ONLY when the request does not already carry
+ * one. Honors the same shape dispatch as injectSystemPrompt.
+ */
+export function injectDefaultSystemPrompt(body, format, prompt) {
+  if (!body || !prompt) return;
+  if (hasSystemPrompt(body, format)) return;
+  injectSystemPrompt(body, format, prompt);
+}
+
 export function injectSystemPrompt(body, format, prompt) {
   if (!body || !prompt) return;
 

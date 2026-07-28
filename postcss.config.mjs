@@ -1,12 +1,9 @@
-import path from "node:path";
-import { fileURLToPath } from "node:url";
-
-const projectRoot = path.dirname(fileURLToPath(import.meta.url));
-
 export default {
   plugins: {
-    "@tailwindcss/postcss": {
-      base: projectRoot,
-    },
+    // Scanning is owned entirely by @source directives in globals.css
+    // (`@import "tailwindcss" source(none)` + explicit @source paths).
+    // Leaving `base` unset avoids the base/@source double-conflict that
+    // forced Tailwind to re-walk repo-root neighbors on every CSS rebuild.
+    "@tailwindcss/postcss": {},
   },
 };

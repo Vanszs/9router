@@ -10,9 +10,7 @@ import { useCopyToClipboard } from "@/shared/hooks/useCopyToClipboard";
 import { fetchCached } from "@/shared/utils/fetchCache";
 import { useModelCaps } from "@/shared/hooks/useModelCaps";
 import { isOpenAICompatibleProvider, isAnthropicCompatibleProvider } from "@/shared/constants/providers";
-
-// Validate combo name: only a-z, A-Z, 0-9, -, _
-const VALID_NAME_REGEX = /^[a-zA-Z0-9_.\-]+$/;
+import { COMBO_NAME_REGEX } from "@/shared/constants/comboValidation.js";
 
 export default function CombosPage() {
   const [combos, setCombos] = useState([]);
@@ -537,7 +535,7 @@ function ComboFormModal({ isOpen, combo, onClose, onSave, activeProviders, kindF
       setNameError("Name is required");
       return false;
     }
-    if (!VALID_NAME_REGEX.test(value)) {
+    if (!COMBO_NAME_REGEX.test(value)) {
       setNameError("Only letters, numbers, -, _ and . allowed");
       return false;
     }

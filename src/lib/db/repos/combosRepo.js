@@ -7,6 +7,7 @@ function rowToCombo(row) {
   return {
     id: row.id,
     name: row.name,
+    alias: row.alias ?? null,
     kind: row.kind,
     context_length: row.context_length ?? null,
     models: parseJson(row.models, []),
@@ -33,12 +34,19 @@ export async function getComboByName(name) {
   return rowToCombo(row);
 }
 
+export async function getComboByAlias(alias) {
+  const db = await getAdapter();
+  const row = db.get(`SELECT * FROM combos WHERE alias = ?`, [alias]);
+  return rowToCombo(row);
+}
+
 export async function createCombo(data) {
   const db = await getAdapter();
   const now = new Date().toISOString();
   const combo = {
     id: randomUUID(),
     name: data.name,
+    alias: data.alias ?? null,
     kind: data.kind || null,
     context_length: data.context_length || null,
     models: data.models || [],
@@ -46,8 +54,8 @@ export async function createCombo(data) {
     updatedAt: now,
   };
   db.run(
-    `INSERT INTO combos(id, name, kind, context_length, models, createdAt, updatedAt) VALUES(?, ?, ?, ?, ?, ?, ?)`,
-    [combo.id, combo.name, combo.kind, combo.context_length, stringifyJson(combo.models), combo.createdAt, combo.updatedAt]
+    `INSERT INTO combos(id, name, alias, kind, context_length, models, createdAt, updatedAt) VALUES(?, ?, ?, ?, ?, ?, ?, ?)`,
+    [combo.id, combo.name, combo.alias, combo.kind, combo.context_length, stringifyJson(combo.models), combo.createdAt, combo.updatedAt]
   );
   return combo;
 }
@@ -60,8 +68,8 @@ export async function updateCombo(id, data) {
     if (!row) return;
     const merged = { ...rowToCombo(row), ...data, updatedAt: new Date().toISOString() };
     db.run(
-      `UPDATE combos SET name = ?, kind = ?, context_length = ?, models = ?, updatedAt = ? WHERE id = ?`,
-      [merged.name, merged.kind, merged.context_length || null, stringifyJson(merged.models || []), merged.updatedAt, id]
+      `UPDATE combos SET name = ?, alias = ?, kind = ?, context_length = ?, models = ?, updatedAt = ? WHERE id = ?`,
+      [merged.name, merged.alias ?? null, merged.kind, merged.context_length || null, stringifyJson(merged.models || []), merged.updatedAt, id]
     );
     result = merged;
   });

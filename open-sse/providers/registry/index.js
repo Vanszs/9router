@@ -126,6 +126,7 @@ import p124 from "./a6api.js";
 import p125 from "./alims-intl.js";
 import p126 from "./zenmux.js";
 import p127 from "./tokenrouter.js";
+import p128 from "./duckduckgo.js";
 
 export default [
   p0,
@@ -255,5 +256,6 @@ export default [
   p124,
   p125,
   p126,
-  p127
+  p127,
+  p128
 ];
