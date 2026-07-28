@@ -94,7 +94,7 @@ export async function validateAgentRouterConnection(apiKey, fetchFn = fetch) {
       method: "POST",
       headers,
       body: JSON.stringify({
-        model: "claude-opus-4-7",
+        model: "claude-opus-4-8",
         max_tokens: 1,
         messages: [{ role: "user", content: "ping" }],
         stream: false
