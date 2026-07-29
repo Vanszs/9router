@@ -186,3 +186,57 @@ export function getProxyHash(providerSpecificData = {}) {
   if (poolId) return `pool-${djb2(poolId)}`;
   return "direct";
 }
+
+/**
+ * ---------------------------------------------------------------------------
+ * Proxy Rotation Strategy
+ * ---------------------------------------------------------------------------
+ *
+ * Module-level state tracking for round-robin rotation.
+ * Maps providerId -> { currentIndex, poolHash }
+ * When the pool list changes (pools added/removed), the hash changes and the
+ * cursor resets automatically.
+ */
+
+const _roundRobinState = new Map();
+
+function computePoolHash(poolIds) {
+  return [...poolIds].sort().join(",");
+}
+
+/**
+ * Pick a proxy pool ID from the available pool list using the configured
+ * rotation strategy.
+ *
+ * @param {string[]} poolIds    - Active proxy pool IDs to choose from.
+ * @param {string}   strategy   - "random" or "round-robin".
+ * @param {string}   providerId - Provider identifier (state key, each
+ *                                provider rotates independently).
+ * @returns {string|null} Selected proxy pool ID, or null if poolIds empty.
+ */
+export function pickProxyPoolId(poolIds, strategy, providerId) {
+  if (!Array.isArray(poolIds) || poolIds.length === 0) return null;
+
+  if (strategy === "random") {
+    const idx = Math.floor(Math.random() * poolIds.length);
+    return poolIds[idx];
+  }
+
+  if (strategy === "round-robin") {
+    const currentHash = computePoolHash(poolIds);
+    const prev = _roundRobinState.get(providerId);
+
+    // Reset cursor when pool composition changes (pools added/removed)
+    if (!prev || prev.poolHash !== currentHash) {
+      _roundRobinState.set(providerId, { currentIndex: 0, poolHash: currentHash });
+      return poolIds[0];
+    }
+
+    const nextIndex = (prev.currentIndex + 1) % poolIds.length;
+    _roundRobinState.set(providerId, { currentIndex: nextIndex, poolHash: currentHash });
+    return poolIds[nextIndex];
+  }
+
+  // Unknown strategy — fall back to first pool
+  return poolIds[0];
+}
