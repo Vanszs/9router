@@ -123,3 +123,6 @@ next-env.d.ts
 .graphifyignore
 graphify-out/*
 .next-analyze/*
+*.orig
+*.rej
+.claude/worktrees/
