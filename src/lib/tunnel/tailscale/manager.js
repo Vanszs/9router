@@ -1,5 +1,5 @@
 import { loadState, generateShortId } from "../shared/state.js";
-import { startFunnel, stopFunnel, isTailscaleRunning, isTailscaleRunningStrict, isTailscaleLoggedIn, isTailscaleLoggedInStrict, startLogin, startDaemonWithPassword, provisionCert } from "./tailscale.js";
+import { startFunnel, stopFunnel, isTailscaleRunning, isTailscaleRunningStrict, isTailscaleLoggedIn, isTailscaleLoggedInStrict, startLogin, startDaemonWithPassword, provisionCert, getAuthUrlFromStatus } from "./tailscale.js";
 import { waitForHealth } from "./healthCheck.js";
 import { getSettings, updateSettings } from "@/lib/localDb";
 import { getCachedPassword, loadEncryptedPassword, initDbHooks } from "@/mitm/manager";
@@ -119,11 +119,14 @@ export async function getTailscaleStatus() {
   // Skip probes entirely when disabled; check login before running (device removed = not logged in)
   const loggedIn = settingsEnabled ? isTailscaleLoggedIn() : false;
   const running = loggedIn ? isTailscaleRunning() : false;
+  const authUrl = settingsEnabled && !loggedIn ? getAuthUrlFromStatus() : null;
   return {
     enabled: settingsEnabled && running,
     settingsEnabled,
     tunnelUrl,
     running,
-    loggedIn
+    loggedIn,
+    needsLogin: !loggedIn && !!authUrl,
+    authUrl
   };
 }

@@ -266,6 +266,10 @@ export default function APIPageClient({ machineId }) {
       const tsUrlVal = data.tailscale?.tunnelUrl || "";
       setTsUrl(tsUrlVal);
       setTsEnabled(tsEn);
+      if (data.tailscale?.authUrl) {
+        setTsAuthUrl(data.tailscale.authUrl);
+        setTsAuthLabel("Open Login Page");
+      }
       updateReachable(null, tsClientReachableRef, tsMissRef, setTsReachable, tsEverReachableRef, setTsEverReachable);
     } catch { /* ignore poll errors */ }
   };
@@ -307,6 +311,10 @@ export default function APIPageClient({ machineId }) {
         const tsUrlVal = data.tailscale?.tunnelUrl || "";
         setTsUrl(tsUrlVal);
         setTsEnabled(tsEn);
+        if (data.tailscale?.authUrl) {
+          setTsAuthUrl(data.tailscale.authUrl);
+          setTsAuthLabel("Open Login Page");
+        }
         updateReachable(null, tsClientReachableRef, tsMissRef, setTsReachable, tsEverReachableRef, setTsEverReachable);
       }
     } catch (error) {
@@ -1209,6 +1217,15 @@ export default function APIPageClient({ machineId }) {
                   <span className="material-symbols-outlined animate-spin text-sm">progress_activity</span>
                   {tsEverReachable ? "Tailscale reconnecting..." : "Tailscale checking..."}
                 </div>
+                {tsAuthUrl && (
+                  <Button
+                    size="sm"
+                    icon="open_in_new"
+                    onClick={() => window.open(tsAuthUrl, "tailscale_auth", "width=600,height=700,noopener,noreferrer")}
+                  >
+                    {tsAuthLabel || "Open Login Page"}
+                  </Button>
+                )}
                 <button
                   onClick={() => setShowDisableTsModal(true)}
                   className="p-2 hover:bg-red-500/10 rounded text-red-500 transition-colors shrink-0"

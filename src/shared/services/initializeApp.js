@@ -201,6 +201,13 @@ async function safeRestartTailscale(reason) {
   const running = reason === "startup" ? await isTailscaleRunningStrict() : isTailscaleRunning();
   if (running) return;
 
+  // If daemon is not logged in, stop retrying endlessly in background and auto-deactivate
+  if (!isTailscaleLoggedIn()) {
+    console.log(`[Tailscale] safeRestart (${reason}) — not logged in, auto-deactivating to prevent retry loop`);
+    await disableTailscale();
+    return;
+  }
+
   // Daemon alive but funnel dropped → recover funnel only; never full-restart (preserves login/daemon).
   if (isDaemonAlive() && svc.activeLocalPort) {
     try {
@@ -209,6 +216,10 @@ async function safeRestartTailscale(reason) {
       console.log("[Tailscale] funnel re-established (daemon alive)");
     } catch (err) {
       console.log("[Tailscale] funnel recovery failed:", err.message);
+      if (/Logged ?out|not logged in|NeedsLogin/i.test(err.message)) {
+        console.log("[Tailscale] logged out / needs login detected, auto-deactivating");
+        await disableTailscale();
+      }
     }
     return;
   }
@@ -222,11 +233,19 @@ async function safeRestartTailscale(reason) {
 
   console.log(`[Tailscale] safeRestart (${reason}) — daemon not running${force ? " [force]" : ""}`);
   try {
-    await enableTailscale();
+    const res = await enableTailscale();
+    if (res?.needsLogin) {
+      console.log("[Tailscale] login required, auto-deactivating until user completes login");
+      await disableTailscale();
+      return;
+    }
     svc.lastRestartAt = Date.now();
     console.log("[Tailscale] restart success");
   } catch (err) {
     console.log("[Tailscale] restart failed:", err.message);
+    if (/Logged ?out|not logged in|NeedsLogin/i.test(err.message)) {
+      await disableTailscale();
+    }
   }
 }
 

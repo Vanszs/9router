@@ -661,7 +661,7 @@ function ensureDaemon() {
 }
 
 /** Read AuthURL from `tailscale status --json` (Win exposes it there, not stdout). */
-function getAuthUrlFromStatus() {
+export function getAuthUrlFromStatus() {
   const bin = getTailscaleBin();
   if (!bin) return null;
   try {

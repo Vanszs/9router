@@ -10,7 +10,8 @@ RUN apk add --no-cache python3 make g++ linux-headers
 COPY package.json ./
 RUN --mount=type=cache,target=/root/.npm \
   npm install
-
+# Copy app source
+# build-timestamp: 2026-07-29-10-45
 COPY . ./
 ENV NEXT_TELEMETRY_DISABLED=1
 RUN npm run build
