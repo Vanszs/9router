@@ -11,6 +11,11 @@ export {
   getProxyPools, getProxyPoolById,
   createProxyPool, updateProxyPool, deleteProxyPool,
   getApiKeys, getApiKeyById, createApiKey, updateApiKey, deleteApiKey, validateApiKey,
+} from "@/lib/db/index.js";
+export {
+  checkApiKeyLimits, recordApiKeyUsage, getApiKeyUsageSnapshot,
+} from "@/lib/db/repos/apiKeyUsageRepo.js";
+export {
   getCombos, getComboById, getComboByName,
   createCombo, updateCombo, deleteCombo,
   getModelAliases, setModelAlias, deleteModelAlias,

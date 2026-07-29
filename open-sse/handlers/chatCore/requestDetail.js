@@ -1,4 +1,5 @@
 import { saveRequestUsage, appendRequestLog, saveRequestDetail } from "@/lib/usageDb.js";
+import { recordApiKeyUsage } from "@/lib/db/repos/apiKeyUsageRepo.js";
 import { COLORS } from "../../utils/stream.js";
 import { canonicalizeUsage } from "../../utils/usageTracking.js";
 
@@ -95,7 +96,7 @@ export function buildRequestDetail(base, overrides = {}) {
   };
 }
 
-export function saveUsageStats({ provider, model, tokens, connectionId, apiKey, endpoint, label = "USAGE" }) {
+export function saveUsageStats({ provider, model, tokens, connectionId, apiKey, apiKeyInfo, endpoint, label = "USAGE" }) {
   if (!tokens || typeof tokens !== "object") return;
 
   const inTokens = tokens.input_tokens ?? tokens.prompt_tokens ?? 0;
@@ -123,4 +124,10 @@ export function saveUsageStats({ provider, model, tokens, connectionId, apiKey, 
     apiKey: apiKey || undefined,
     endpoint: endpoint || null
   }).catch(() => {});
+
+  // Record per-key usage limits against the API key info (if provided).
+  if (apiKeyInfo) {
+    const totalTokens = (normalized.prompt_tokens || 0) + (normalized.completion_tokens || 0);
+    recordApiKeyUsage(apiKeyInfo, totalTokens);
+  }
 }
