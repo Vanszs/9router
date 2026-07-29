@@ -71,6 +71,10 @@ export async function GET(request) {
     if (apiKeyInfo) {
       const allowedOwners = new Map();
       for (const model of data) {
+        // Bare user-defined aliases (owned_by === "alias") are short-circuitable
+        // pointers to a real provider/model. ACL on the underlying model is
+        // enforced at chat time via isModelAllowed, so let them through here.
+        if (model.owned_by === "alias") continue;
         const isCombo = model.owned_by === "combo";
         const key = isCombo
           ? `combo:${stripComboPrefix(model.id)}`
@@ -83,6 +87,7 @@ export async function GET(request) {
         }
       }
       data = data.filter((model) => {
+        if (model.owned_by === "alias") return true;
         const isCombo = model.owned_by === "combo";
         const key = isCombo
           ? `combo:${stripComboPrefix(model.id)}`

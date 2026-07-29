@@ -38,6 +38,9 @@ export default function APIPageClient({ machineId }) {
   const [editKindsAll, setEditKindsAll] = useState(true); // null = all
   const [editProvidersAll, setEditProvidersAll] = useState(true);
   const [editCombosAll, setEditCombosAll] = useState(true);
+  const [editModelsAll, setEditModelsAll] = useState(true);
+  const [editModels, setEditModels] = useState([]); // selected model ids (provider/model)
+  const [editModelsByProvider, setEditModelsByProvider] = useState({}); // providerId → [modelId]
   const [editSaving, setEditSaving] = useState(false);
   // Limit edit state (empty string = unlimited)
   const [editExpiresAt, setEditExpiresAt] = useState("");
@@ -52,6 +55,7 @@ export default function APIPageClient({ machineId }) {
   const [providerList, setProviderList] = useState([]);
   const [aliasMap, setAliasMap] = useState({}); // alias → provider ID
   const [comboList, setComboList] = useState([]);
+  const [allModelsCatalog, setAllModelsCatalog] = useState([]); // {id, provider, model}[]
 
   const [requireApiKey, setRequireApiKey] = useState(false);
   const [allowRemoteNoApiKey, setAllowRemoteNoApiKey] = useState(false);
@@ -493,7 +497,7 @@ export default function APIPageClient({ machineId }) {
     }).sort((a, b) => a.displayName.localeCompare(b.displayName));
   };
 
-  const handleOpenEditKey = (key) => {
+  const handleOpenEditKey = async (key) => {
     setEditingKey(key);
     setEditName(key.name || "");
     setEditExpiresAt(key.expiresAt ? key.expiresAt.slice(0, 16) : "");
@@ -508,11 +512,15 @@ export default function APIPageClient({ machineId }) {
     const ap = key.allowedProviders;
     const ac = key.allowedCombos;
     const ak = key.allowedKinds;
+    const am = key.allowedModels;
     setEditProvidersAll(!ap);
     setEditCombosAll(!ac);
     setEditKindsAll(!ak);
+    setEditModelsAll(!am);
     setEditCombos(ac || []);
     setEditKinds(ak || []);
+    setEditModels(am || []);
+    setEditModelsByProvider({});
 
     // Resolve stored ACL provider values to provider IDs in our list
     // Stored values can be: full provider ID, prefix (e.g. "tr"), or alias (e.g. "oc", "qd", "kc")
@@ -535,6 +543,23 @@ export default function APIPageClient({ machineId }) {
     } else {
       setEditProviders([]);
     }
+
+    // Lazy-load model catalog for per-provider model ACL
+    if (allModelsCatalog.length === 0) {
+      try {
+        const res = await fetch("/api/models", { cache: "no-store" });
+        if (res.ok) {
+          const data = await res.json();
+          const list = Array.isArray(data?.models) ? data.models : [];
+          setAllModelsCatalog(list.map((m) => ({
+            id: m.id || `${m.provider}/${m.model}`,
+            provider: m.provider || (m.id || "").split("/")[0],
+            model: m.model || (m.id || "").split("/").slice(1).join("/"),
+            alias: m.alias || null,
+          })));
+        }
+      } catch { /* ignore */ }
+    }
   };
 
   const handleSaveEditKey = async () => {
@@ -552,17 +577,18 @@ export default function APIPageClient({ machineId }) {
         allowedProviders: editProvidersAll ? null : editProviders,
         allowedCombos: editCombosAll ? null : editCombos,
         allowedKinds: editKindsAll ? null : editKinds,
+        allowedModels: editModelsAll ? null : editModels,
         limits: {
-          expiresAt: editExpiresAt ? new Date(editExpiresAt).toISOString() : null,
-          maxTokens: parseNum(editMaxTokens),
-          maxTokensDaily: parseNum(editMaxTokensDaily),
-          rpm: parseNum(editRpm),
-          rph: parseNum(editRph),
-          rpd: parseNum(editRpd),
-          tokens5h: parseNum(editTokens5h),
-          tokensWeekly: parseNum(editTokensWeekly),
-          tokensMonthly: parseNum(editTokensMonthly),
-        },
+            expiresAt: editExpiresAt ? new Date(editExpiresAt).toISOString() : null,
+            maxTokens: parseNum(editMaxTokens),
+            maxTokensDaily: parseNum(editMaxTokensDaily),
+            rpm: parseNum(editRpm),
+            rph: parseNum(editRph),
+            rpd: parseNum(editRpd),
+            tokens5h: parseNum(editTokens5h),
+            tokensWeekly: parseNum(editTokensWeekly),
+            tokensMonthly: parseNum(editTokensMonthly),
+          },
       };
       const res = await fetch(`/api/keys/${editingKey.id}`, {
         method: "PUT",
@@ -591,6 +617,16 @@ export default function APIPageClient({ machineId }) {
 
   const toggleEditKind = (kind) => {
     setEditKinds((prev) => prev.includes(kind) ? prev.filter((k) => k !== kind) : [...prev, kind]);
+  };
+
+  const toggleEditModel = (modelId) => {
+    setEditModels((prev) => prev.includes(modelId) ? prev.filter((m) => m !== modelId) : [...prev, modelId]);
+  };
+
+  const modelsForProvider = (providerId) => {
+    const p = providerList.find((x) => x.id === providerId);
+    const aliases = new Set([providerId, p?.alias, p?.prefix].filter(Boolean));
+    return allModelsCatalog.filter((m) => aliases.has(m.provider) || (m.id || "").startsWith(`${providerId}/`) || (p?.alias && (m.id || "").startsWith(`${p.alias}/`)));
   };
 
   const fetchData = async () => {
@@ -1603,7 +1639,7 @@ export default function APIPageClient({ machineId }) {
                     </p>
                   )}
                    {/* ACL badges */}
-                  {(key.allowedProviders || key.allowedCombos || key.allowedKinds) && (
+                  {(key.allowedProviders || key.allowedCombos || key.allowedKinds || key.allowedModels) && (
                     <div className="flex flex-wrap gap-1 mt-1">
                       {key.allowedProviders && (
                         <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-500 dark:bg-blue-500/20" title={key.allowedProviders.join(", ")}>
@@ -1630,14 +1666,19 @@ export default function APIPageClient({ machineId }) {
                           {key.allowedKinds.length === 0 ? "No kinds" : key.allowedKinds.join(", ")}
                         </span>
                       )}
-                      {key.rpm != null && <span className="text-[10px] px-1.5 py-0.5 rounded bg-orange-500/10 text-orange-500 dark:bg-orange-500/20">{key.rpm} RPM</span>}
-                      {key.rph != null && <span className="text-[10px] px-1.5 py-0.5 rounded bg-orange-500/10 text-orange-500 dark:bg-orange-500/20">{key.rph} RPH</span>}
-                      {key.rpd != null && <span className="text-[10px] px-1.5 py-0.5 rounded bg-orange-500/10 text-orange-500 dark:bg-orange-500/20">{key.rpd} RPD</span>}
-                      {key.maxTokens != null && <span className="text-[10px] px-1.5 py-0.5 rounded bg-cyan-500/10 text-cyan-500 dark:bg-cyan-500/20">max {key.maxTokens.toLocaleString()} tokens</span>}
-                      {key.maxTokensDaily != null && <span className="text-[10px] px-1.5 py-0.5 rounded bg-cyan-500/10 text-cyan-500 dark:bg-cyan-500/20">{key.maxTokensDaily.toLocaleString()} tokens/day</span>}
-                      {key.tokens5h != null && <span className="text-[10px] px-1.5 py-0.5 rounded bg-cyan-500/10 text-cyan-500 dark:bg-cyan-500/20">{key.tokens5h.toLocaleString()} tokens/5h</span>}
-                      {key.tokensWeekly != null && <span className="text-[10px] px-1.5 py-0.5 rounded bg-cyan-500/10 text-cyan-500 dark:bg-cyan-500/20">{key.tokensWeekly.toLocaleString()} tokens/week</span>}
-                      {key.tokensMonthly != null && <span className="text-[10px] px-1.5 py-0.5 rounded bg-cyan-500/10 text-cyan-500 dark:bg-cyan-500/20">{key.tokensMonthly.toLocaleString()} tokens/month</span>}
+                        {key.rpm != null && <span className="text-[10px] px-1.5 py-0.5 rounded bg-orange-500/10 text-orange-500 dark:bg-orange-500/20">{key.rpm} RPM</span>}
+                        {key.rph != null && <span className="text-[10px] px-1.5 py-0.5 rounded bg-orange-500/10 text-orange-500 dark:bg-orange-500/20">{key.rph} RPH</span>}
+                        {key.rpd != null && <span className="text-[10px] px-1.5 py-0.5 rounded bg-orange-500/10 text-orange-500 dark:bg-orange-500/20">{key.rpd} RPD</span>}
+                        {key.maxTokens != null && <span className="text-[10px] px-1.5 py-0.5 rounded bg-cyan-500/10 text-cyan-500 dark:bg-cyan-500/20">max {key.maxTokens.toLocaleString()} tokens</span>}
+                        {key.maxTokensDaily != null && <span className="text-[10px] px-1.5 py-0.5 rounded bg-cyan-500/10 text-cyan-500 dark:bg-cyan-500/20">{key.maxTokensDaily.toLocaleString()} tokens/day</span>}
+                        {key.tokens5h != null && <span className="text-[10px] px-1.5 py-0.5 rounded bg-cyan-500/10 text-cyan-500 dark:bg-cyan-500/20">{key.tokens5h.toLocaleString()} tokens/5h</span>}
+                        {key.tokensWeekly != null && <span className="text-[10px] px-1.5 py-0.5 rounded bg-cyan-500/10 text-cyan-500 dark:bg-cyan-500/20">{key.tokensWeekly.toLocaleString()} tokens/week</span>}
+                        {key.tokensMonthly != null && <span className="text-[10px] px-1.5 py-0.5 rounded bg-cyan-500/10 text-cyan-500 dark:bg-cyan-500/20">{key.tokensMonthly.toLocaleString()} tokens/month</span>}
+                        {key.allowedModels && (
+                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-600 dark:bg-amber-500/20 dark:text-amber-300" title={key.allowedModels.join(", ")}>
+                            {key.allowedModels.length === 0 ? "No models" : `${key.allowedModels.length} models`}
+                          </span>
+                        )}
                     </div>
                   )}
                 </div>
@@ -1819,6 +1860,62 @@ export default function APIPageClient({ machineId }) {
               </div>
             )}
             {editProvidersAll && <p className="text-xs text-text-muted">This key can access all providers ({providerList.length}).</p>}
+          </div>
+
+          {/* Per-provider models */}
+          <div>
+            <div className="flex items-center justify-between mb-2">
+              <label className="text-sm font-medium">Models</label>
+              <label className="flex items-center gap-1.5 text-xs cursor-pointer">
+                <input type="checkbox" checked={editModelsAll} onChange={(e) => setEditModelsAll(e.target.checked)} />
+                <span className="text-text-muted">All allowed</span>
+              </label>
+            </div>
+            {!editModelsAll && (
+              <div className="max-h-72 overflow-y-auto border border-border-subtle rounded-lg p-2 space-y-2">
+                {(editProvidersAll ? providerList : providerList.filter((p) => editProviders.includes(p.id))).length === 0 ? (
+                  <p className="text-xs text-text-muted p-2">No providers selected.</p>
+                ) : (
+                  (editProvidersAll ? providerList : providerList.filter((p) => editProviders.includes(p.id))).map((p) => {
+                    const models = modelsForProvider(p.id);
+                    const open = !!editModelsByProvider[p.id];
+                    return (
+                      <div key={p.id} className="border border-border-subtle rounded-md">
+                        <button
+                          type="button"
+                          onClick={() => setEditModelsByProvider((prev) => ({ ...prev, [p.id]: !prev[p.id] }))}
+                          className="w-full flex items-center justify-between px-2 py-1.5 text-xs hover:bg-surface-2 rounded-md"
+                        >
+                          <span className="font-medium">{p.displayName}</span>
+                          <span className="text-text-muted text-[10px]">
+                            {models.filter((m) => editModels.includes(m.id)).length}/{models.length || "?"}
+                            <span className="material-symbols-outlined text-sm align-middle ml-1">{open ? "expand_less" : "expand_more"}</span>
+                          </span>
+                        </button>
+                        {open && (
+                          <div className="px-2 pb-2 space-y-1">
+                            {models.length === 0 ? (
+                              <p className="text-[10px] text-text-muted px-1">No models listed for this provider.</p>
+                            ) : (
+                              models.map((m) => {
+                                const checked = editModels.includes(m.id);
+                                return (
+                                  <label key={m.id} className={`flex items-center gap-2 px-2 py-1 rounded text-[11px] cursor-pointer ${checked ? "bg-primary/10 text-primary" : "hover:bg-surface-2"}`}>
+                                    <input type="checkbox" checked={checked} onChange={() => toggleEditModel(m.id)} className="rounded" />
+                                    <span className="font-mono truncate">{m.alias || m.id}</span>
+                                  </label>
+                                );
+                              })
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+            )}
+            {editModelsAll && <p className="text-xs text-text-muted">This key can access all models of allowed providers.</p>}
           </div>
 
           {/* Combos */}

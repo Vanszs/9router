@@ -1,7 +1,7 @@
 // Migration 005: add optional per-key usage/expiration limits.
 // All columns are nullable; null means unlimited / no restriction.
 export default {
-  version: 5,
+  version: 6,
   name: "add-api-key-limits",
   up(db) {
     const rows = db.all("PRAGMA table_info(apiKeys)");

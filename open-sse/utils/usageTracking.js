@@ -228,6 +228,59 @@ export function hasValidUsage(usage) {
 }
 
 /**
+ * Detect a usage object with a provider-reported zero completion count
+ * despite real streamed content having been produced.
+ *
+ * Some providers (e.g. Shiteru / OpenAI-compatible passthrough on large prompts)
+ * return a finish chunk like:
+ *   {"usage": {"prompt_tokens": 182812, "completion_tokens": 0, "estimated": true}}
+ *
+ * hasValidUsage() returns true because prompt_tokens > 0, so the caller's
+ * "estimate the whole thing from scratch" fallback is skipped — yet
+ * completion_tokens is 0 even though the client received real content.
+ * Distinct from hasValidUsage(): this only flags the zero-completion-with-
+ * content case, so callers can patch just the output side and keep the
+ * provider's (usually more accurate) input token count intact.
+ *
+ * @param {object|null} usage - Usage object (any format)
+ * @param {number} totalContentLength - Total length of streamed response content
+ * @returns {boolean} true if completion_tokens/output_tokens is a zero that contradicts real content
+ */
+export function hasZeroCompletionWithContent(usage, totalContentLength = 0) {
+  if (!usage || typeof usage !== "object") return false;
+  if (!(totalContentLength > 0)) return false;
+
+  const outTokens = usage.completion_tokens ?? usage.output_tokens;
+  return typeof outTokens === "number" && outTokens === 0;
+}
+
+/**
+ * Patch a usage object whose completion/output tokens are zero despite real
+ * streamed content, replacing only the output side with an estimate derived
+ * from content length. Keeps the provider's prompt/input token count intact
+ * (it's usually accurate — only the provider's output estimate failed).
+ *
+ * @param {object} usage - Usage object with completion_tokens/output_tokens === 0
+ * @param {number} totalContentLength - Total length of streamed response content
+ * @returns {object} New usage object with corrected completion/total tokens
+ */
+export function fixZeroCompletionUsage(usage, totalContentLength) {
+  const estimatedOut = estimateOutputTokens(totalContentLength);
+  const fixed = { ...usage, estimated: true };
+
+  if (fixed.completion_tokens !== undefined) {
+    fixed.completion_tokens = estimatedOut;
+    const prompt = fixed.prompt_tokens || 0;
+    fixed.total_tokens = prompt + estimatedOut;
+  }
+  if (fixed.output_tokens !== undefined) {
+    fixed.output_tokens = estimatedOut;
+  }
+
+  return fixed;
+}
+
+/**
  * Extract usage from any format (Claude, OpenAI, Gemini, Responses API)
  */
 export function extractUsage(chunk) {

@@ -61,7 +61,7 @@ export async function GET(request, { params }) {
 
     return NextResponse.json({ proxyPool });
   } catch (error) {
-    console.log("Error fetching proxy pool:", error);
+    console.error("Error fetching proxy pool:", error);
     return NextResponse.json({ error: "Failed to fetch proxy pool" }, { status: 500 });
   }
 }
@@ -86,7 +86,7 @@ export async function PUT(request, { params }) {
     const updated = await updateProxyPool(id, normalized.updates);
     return NextResponse.json({ proxyPool: updated });
   } catch (error) {
-    console.log("Error updating proxy pool:", error);
+    console.error("Error updating proxy pool:", error);
     return NextResponse.json({ error: "Failed to update proxy pool" }, { status: 500 });
   }
 }
@@ -117,7 +117,7 @@ export async function DELETE(request, { params }) {
     await deleteProxyPool(id);
     return NextResponse.json({ success: true });
   } catch (error) {
-    console.log("Error deleting proxy pool:", error);
+    console.error("Error deleting proxy pool:", error);
     return NextResponse.json({ error: "Failed to delete proxy pool" }, { status: 500 });
   }
 }

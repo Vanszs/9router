@@ -78,11 +78,14 @@ function MediaProviderCard({ provider, kind, connections, isCustom, onToggle }) 
             </div>
           </div>
           {total > 0 && (
-            <button
-              type="button"
+            <div
               className="shrink-0 opacity-100 transition-opacity sm:opacity-0 sm:group-hover:opacity-100"
               onClick={handleToggleClick}
+              role="switch"
+              aria-checked={!allDisabled}
               aria-label={allDisabled ? "Enable provider" : "Disable provider"}
+              tabIndex={0}
+              onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); handleToggleClick(e); } }}
             >
               <Toggle
                 size="sm"
@@ -90,7 +93,7 @@ function MediaProviderCard({ provider, kind, connections, isCustom, onToggle }) 
                 onChange={() => {}}
                 title={allDisabled ? "Enable provider" : "Disable provider"}
               />
-            </button>
+            </div>
           )}
         </div>
       </Card>
@@ -147,15 +150,17 @@ export default function MediaKindClient({ initialConnections, initialNodes, init
   const [combos, setCombos] = useState(initialCombos || []);
   const [showAddCustomEmbedding, setShowAddCustomEmbedding] = useState(false);
 
-  // webSearch/webFetch listing pages are merged into /web — return null and let server handle
+  // webSearch/webFetch listing pages are merged into /web — redirect via effect (not during render).
   const kindConfig = MEDIA_PROVIDER_KINDS.find((k) => k.id === kind);
   const isEmbedding = kind === "embedding";
   const supportsCombo = COMBO_KINDS.has(kind);
+  const needsWebRedirect = kind === "webSearch" || kind === "webFetch";
 
-  if (kind === "webSearch" || kind === "webFetch") {
-    router.replace("/dashboard/media-providers/web");
-    return null;
-  }
+  useEffect(() => {
+    if (needsWebRedirect) router.replace("/dashboard/media-providers/web");
+  }, [needsWebRedirect, router]);
+
+  if (needsWebRedirect) return null;
   if (!kindConfig) return notFound();
 
   const providers = getProvidersByKind(kind);

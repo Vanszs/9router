@@ -14,10 +14,25 @@ export const EXTRA_MARKERS = {
   ml: ["torch", "huggingface-hub"],
 };
 
-const HEADROOM_PIP_TIMEOUT_MS = 8000;
+const HEADROOM_PIP_TIMEOUT_MS = 2500;
+const HEADROOM_WHICH_TIMEOUT_MS = 800;
 
 const IS_WIN = process.platform === "win32";
 const WHICH_CMD = IS_WIN ? "where" : "which";
+
+// Per-process caches: probing python interpreters is expensive (each candidate
+// forks `python --version` + `pip show`), and the dashboard polls
+// /api/headroom/status on every page load. Without these, a single status
+// request can block the event loop for 25+ seconds when headroom-ai is absent.
+let _binCache = undefined;
+let _pyCache = undefined;
+let _extrasCache = undefined;
+
+export function invalidateHeadroomCaches() {
+  _binCache = undefined;
+  _pyCache = undefined;
+  _extrasCache = undefined;
+}
 
 // Extra bin dirs often missing from a packaged/launchd PATH (Python installs headroom here).
 const EXTRA_BINS = IS_WIN
@@ -50,17 +65,20 @@ export const DEFAULT_HEADROOM_URL = process.env.HEADROOM_URL || "http://localhos
 
 // Detect whether the headroom CLI is installed and where its binary lives.
 export function findHeadroomBinary() {
+  if (_binCache !== undefined) return _binCache;
   try {
     const out = execSync(`${WHICH_CMD} headroom`, {
       stdio: ["ignore", "pipe", "ignore"],
       windowsHide: true,
+      timeout: HEADROOM_WHICH_TIMEOUT_MS,
       env: { ...process.env, PATH: EXTENDED_PATH },
     }).toString().trim();
     // Windows `where` may return multiple lines — take the first.
-    return out ? out.split(/\r?\n/)[0].trim() : null;
+    _binCache = out ? out.split(/\r?\n/)[0].trim() : null;
   } catch {
-    return null;
+    _binCache = null;
   }
+  return _binCache;
 }
 
 // Find a Python interpreter >= 3.10 (headroom-ai requires it). Returns null if none.
@@ -89,12 +107,39 @@ function pythonCandidates() {
 }
 
 export function findPython310() {
+  if (_pyCache !== undefined) return _pyCache;
+  // Fast path: no headroom CLI on PATH → headroom-ai is not installed in any
+  // interpreter we care about. Skip the expensive per-candidate pip-show loop
+  // (up to ~20 candidates × 8s timeout) and just return the first Python ≥3.10
+  // so the UI can still offer the install action.
+  if (findHeadroomBinary() === null) {
+    for (const candidate of PYTHON_CANDIDATES) {
+      try {
+        const ver = execSync(`${candidate} --version`, {
+          stdio: ["ignore", "pipe", "ignore"],
+          windowsHide: true,
+          timeout: HEADROOM_WHICH_TIMEOUT_MS,
+          env: { ...process.env, PATH: EXTENDED_PATH },
+        }).toString().trim();
+        const match = ver.match(/(\d+)\.(\d+)/);
+        if (!match) continue;
+        const [major, minor] = [parseInt(match[1], 10), parseInt(match[2], 10)];
+        if (major > MIN_VERSION[0] || (major === MIN_VERSION[0] && minor >= MIN_VERSION[1])) {
+          _pyCache = candidate;
+          return candidate;
+        }
+      } catch { /* candidate not present */ }
+    }
+    _pyCache = null;
+    return null;
+  }
   let fallback = null;
   for (const candidate of pythonCandidates()) {
     try {
       const ver = execSync(`${candidate} --version`, {
         stdio: ["ignore", "pipe", "ignore"],
         windowsHide: true,
+        timeout: HEADROOM_WHICH_TIMEOUT_MS,
         env: { ...process.env, PATH: EXTENDED_PATH },
       }).toString().trim();
       const match = ver.match(/(\d+)\.(\d+)/);
@@ -109,6 +154,7 @@ export function findPython310() {
           timeout: HEADROOM_PIP_TIMEOUT_MS,
           env: { ...process.env, PATH: EXTENDED_PATH },
         });
+        _pyCache = candidate;
         return candidate;
       } catch {
         // Keep scanning until an interpreter that sees headroom-ai is found.
@@ -117,6 +163,7 @@ export function findPython310() {
       // candidate not present, try next
     }
   }
+  _pyCache = fallback;
   return fallback;
 }
 
@@ -167,8 +214,10 @@ export async function getHeadroomStatus(url) {
 //
 // Returns: { installed: bool, version: string|null, extras: { code, ml } }
 export function getInstalledHeadroomExtras(python) {
+  if (_extrasCache !== undefined) return _extrasCache;
+  const empty = { installed: false, version: null, extras: { code: false, ml: false } };
   const py = python || findPython310();
-  if (!py) return { installed: false, version: null, extras: { code: false, ml: false } };
+  if (!py) { _extrasCache = empty; return empty; }
   try {
     const out = execFileSync(py, ["-m", "pip", "list", "--format=json", "--disable-pip-version-check"], {
       stdio: ["ignore", "pipe", "ignore"],
@@ -179,14 +228,16 @@ export function getInstalledHeadroomExtras(python) {
     const packages = JSON.parse(out);
     const names = new Set(packages.map((p) => String(p.name || "").toLowerCase()));
     const installed = names.has("headroom-ai");
-    if (!installed) return { installed: false, version: null, extras: { code: false, ml: false } };
+    if (!installed) { _extrasCache = empty; return empty; }
     const version = packages.find((p) => p.name?.toLowerCase() === "headroom-ai")?.version || null;
     const extras = {};
     for (const extra of HEADROOM_COMPRESSION_EXTRAS) {
       extras[extra] = EXTRA_MARKERS[extra].some((m) => names.has(m));
     }
-    return { installed: true, version, extras };
+    _extrasCache = { installed: true, version, extras };
+    return _extrasCache;
   } catch {
-    return { installed: false, version: null, extras: { code: false, ml: false } };
+    _extrasCache = empty;
+    return empty;
   }
 }

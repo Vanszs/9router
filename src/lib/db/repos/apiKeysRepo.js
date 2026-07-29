@@ -33,6 +33,7 @@ function rowToKey(row) {
     allowedProviders: parsePermList(row.allowedProviders),
     allowedCombos: parsePermList(row.allowedCombos),
     allowedKinds: parsePermList(row.allowedKinds),
+    allowedModels: parsePermList(row.allowedModels),
     expiresAt: row.expiresAt || null,
     maxTokens: parseLimitInt(row.maxTokens),
     maxTokensDaily: parseLimitInt(row.maxTokensDaily),
@@ -74,6 +75,7 @@ export async function createApiKey(name, machineId, limits = {}) {
     allowedProviders: null,
     allowedCombos: null,
     allowedKinds: null,
+    allowedModels: null,
     expiresAt: limits.expiresAt || null,
     maxTokens: parseLimitInt(limits.maxTokens),
     maxTokensDaily: parseLimitInt(limits.maxTokensDaily),
@@ -87,12 +89,12 @@ export async function createApiKey(name, machineId, limits = {}) {
   db.run(
     `INSERT INTO apiKeys(
       id, key, name, machineId, isActive, createdAt,
-      allowedProviders, allowedCombos, allowedKinds,
+      allowedProviders, allowedCombos, allowedKinds, allowedModels,
       expiresAt, maxTokens, maxTokensDaily, rpm, rph, rpd, tokens5h, tokensWeekly, tokensMonthly
-    ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       apiKey.id, apiKey.key, apiKey.name, apiKey.machineId, 1, apiKey.createdAt,
-      null, null, null,
+      null, null, null, null,
       apiKey.expiresAt, apiKey.maxTokens, apiKey.maxTokensDaily, apiKey.rpm, apiKey.rph, apiKey.rpd,
       apiKey.tokens5h, apiKey.tokensWeekly, apiKey.tokensMonthly,
     ]
@@ -114,6 +116,7 @@ export async function updateApiKey(id, data) {
     if ("allowedProviders" in data) merged.allowedProviders = data.allowedProviders;
     if ("allowedCombos" in data) merged.allowedCombos = data.allowedCombos;
     if ("allowedKinds" in data) merged.allowedKinds = data.allowedKinds;
+    if ("allowedModels" in data) merged.allowedModels = data.allowedModels;
     if ("expiresAt" in data) merged.expiresAt = data.expiresAt || null;
     if ("maxTokens" in data) merged.maxTokens = parseLimitInt(data.maxTokens);
     if ("maxTokensDaily" in data) merged.maxTokensDaily = parseLimitInt(data.maxTokensDaily);
@@ -126,7 +129,7 @@ export async function updateApiKey(id, data) {
 
     db.run(
       `UPDATE apiKeys SET key = ?, name = ?, machineId = ?, isActive = ?,
-        allowedProviders = ?, allowedCombos = ?, allowedKinds = ?,
+        allowedProviders = ?, allowedCombos = ?, allowedKinds = ?, allowedModels = ?,
         expiresAt = ?, maxTokens = ?, maxTokensDaily = ?, rpm = ?, rph = ?, rpd = ?,
         tokens5h = ?, tokensWeekly = ?, tokensMonthly = ?
       WHERE id = ?`,
@@ -138,6 +141,7 @@ export async function updateApiKey(id, data) {
         serializePermList(merged.allowedProviders),
         serializePermList(merged.allowedCombos),
         serializePermList(merged.allowedKinds),
+        serializePermList(merged.allowedModels),
         merged.expiresAt,
         merged.maxTokens,
         merged.maxTokensDaily,

@@ -42,6 +42,18 @@ export async function POST(request) {
       return NextResponse.json({ error: "Prefix is required" }, { status: 400 });
     }
 
+    const cleanPrefix = prefix.trim();
+    const existingNodes = await getProviderNodes();
+    const prefixTaken = existingNodes.find(
+      (n) => (n.prefix || "").toLowerCase() === cleanPrefix.toLowerCase()
+    );
+    if (prefixTaken) {
+      return NextResponse.json(
+        { error: `Prefix/tag "${cleanPrefix}" already exists (provider: ${prefixTaken.name || prefixTaken.id})` },
+        { status: 409 }
+      );
+    }
+
     // Determine type
     const nodeType = type || "openai-compatible";
 
@@ -53,7 +65,7 @@ export async function POST(request) {
       const node = await createProviderNode({
         id: `${OPENAI_COMPATIBLE_PREFIX}${apiType}-${randomUUID()}`,
         type: "openai-compatible",
-        prefix: prefix.trim(),
+        prefix: cleanPrefix,
         apiType,
         baseUrl: (baseUrl || OPENAI_COMPATIBLE_DEFAULTS.baseUrl).trim(),
         name: name.trim(),
@@ -71,7 +83,7 @@ export async function POST(request) {
       const node = await createProviderNode({
         id: `${CUSTOM_EMBEDDING_PREFIX}${randomUUID()}`,
         type: "custom-embedding",
-        prefix: prefix.trim(),
+        prefix: cleanPrefix,
         baseUrl: sanitizedBaseUrl,
         name: name.trim(),
       });
@@ -92,7 +104,7 @@ export async function POST(request) {
       const node = await createProviderNode({
         id: `${ANTHROPIC_COMPATIBLE_PREFIX}${randomUUID()}`,
         type: "anthropic-compatible",
-        prefix: prefix.trim(),
+        prefix: cleanPrefix,
         baseUrl: sanitizedBaseUrl,
         name: name.trim(),
       });

@@ -2,9 +2,10 @@ import { getConsoleLogs, getConsoleEmitter, initConsoleLogCapture } from "@/lib/
 
 export const dynamic = "force-dynamic";
 
-initConsoleLogCapture();
-
 export async function GET(request) {
+  // Init on first request only — top-level side effects force Turbopack to
+  // re-evaluate this module during every cold compile of neighboring routes.
+  initConsoleLogCapture();
   const encoder = new TextEncoder();
   const emitter = getConsoleEmitter();
   const state = { closed: false, send: null, sendLines: null, sendClear: null, keepalive: null };

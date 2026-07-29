@@ -133,13 +133,17 @@ export const PROVIDER_CAPABILITIES = {
     "glm-5.2":                 { reasoning: true, thinkingFormat: "claude-budget", thinkingCanDisable: true, contextWindow: 128000, maxOutput: 128000 },
     "gpt-5.5":                 { reasoning: true, thinkingFormat: "openai", thinkingCanDisable: true, contextWindow: 256000, maxOutput: 128000 },
   },
-  // NVIDIA NIM is OpenAI-compatible → rejects MiniMax/GLM native `thinking` field.
-  // Force openai reasoning_effort format for its reasoning models. #issue
+  // NVIDIA NIM hosts models from different providers (Z.ai GLM, DeepSeek, etc).
+  // Each model family needs its native thinking wire-format per testing:
+  // - GLM (z-ai): thinking:{type:"enabled"} (zai format) → returns reasoning_content
+  // - DeepSeek v4 Pro: thinking:{type:"enabled"} + reasoning_effort (deepseek format)
+  // - DeepSeek v4 Flash: no thinking param, only reasoning_effort (openai format)
+  // - MiniMax/Kimi/Nemotron: openai reasoning_effort
   nvidia: {
     "minimaxai/minimax-m2.7": { reasoning: true, thinkingFormat: "openai", thinkingCanDisable: false, contextWindow: 200000, maxOutput: 131072 },
     "minimaxai/minimax-m3": { vision: true, reasoning: true, thinkingFormat: "openai", thinkingCanDisable: false, contextWindow: 512000, maxOutput: 131072 },
-    "z-ai/glm-5.2": { reasoning: true, thinkingFormat: "openai", contextWindow: 200000, maxOutput: 128000 },
-    "deepseek-ai/deepseek-v4-pro": { reasoning: true, thinkingFormat: "openai", contextWindow: 1000000, maxOutput: 65536 },
+    "z-ai/glm-5.2": { reasoning: true, thinkingFormat: "zai", contextWindow: 200000, maxOutput: 128000 },
+    "deepseek-ai/deepseek-v4-pro": { reasoning: true, thinkingFormat: "deepseek", contextWindow: 1000000, maxOutput: 65536 },
     "deepseek-ai/deepseek-v4-flash": { reasoning: true, thinkingFormat: "openai", contextWindow: 1000000, maxOutput: 65536 },
   },
   "kiro": {

@@ -7,6 +7,7 @@ import Image from "next/image";
 import { Card, Button, Input, Toggle, ModelSelectModal } from "@/shared/components";
 import ProviderIcon from "@/shared/components/ProviderIcon";
 import { AI_PROVIDERS, MEDIA_PROVIDER_KINDS } from "@/shared/constants/providers";
+import { COMBO_NAME_REGEX } from "@/shared/constants/comboValidation";
 
 // Parse "providerId/model" or just "providerId" → { providerId, model }
 function parseModelEntry(entry) {
@@ -15,8 +16,6 @@ function parseModelEntry(entry) {
   if (idx < 0) return { providerId: entry, model: "" };
   return { providerId: entry.slice(0, idx), model: entry.slice(idx + 1) };
 }
-
-const VALID_NAME_REGEX = /^[a-zA-Z0-9_.\-]+$/;
 
 const KIND_LABELS = {
   webSearch: "Web Search",
@@ -122,6 +121,7 @@ export default function ComboDetailPage() {
   const [combo, setCombo] = useState(null);
   const [loading, setLoading] = useState(true);
   const [name, setName] = useState("");
+  const [contextLength, setContextLength] = useState("");
   const [nameError, setNameError] = useState("");
   const [providers, setProviders] = useState([]);
   const [roundRobin, setRoundRobin] = useState(false);
@@ -154,6 +154,7 @@ export default function ComboDetailPage() {
       const c = await comboRes.json();
       setCombo(c);
       setName(c.name);
+      setContextLength(c.context_length || "");
       setProviders(c.models || []);
       const s = settingsRes.ok ? await settingsRes.json() : {};
       setRoundRobin(s.comboStrategies?.[c.name]?.fallbackStrategy === "round-robin");
@@ -168,7 +169,7 @@ export default function ComboDetailPage() {
 
   const validateName = (v) => {
     if (!v.trim()) { setNameError("Name is required"); return false; }
-    if (!VALID_NAME_REGEX.test(v)) { setNameError("Only letters, numbers, -, _ and ."); return false; }
+    if (!COMBO_NAME_REGEX.test(v)) { setNameError("Only letters, numbers, -, _ and ."); return false; }
     setNameError("");
     return true;
   };
@@ -187,6 +188,12 @@ export default function ComboDetailPage() {
     if (!validateName(name)) return;
     if (name === combo.name) return;
     const ok = await saveCombo({ name });
+    if (ok) await fetchAll();
+  };
+  const handleSaveContextLength = async () => {
+    const val = contextLength ? Number(contextLength) : null;
+    if (val === combo.context_length) return;
+    const ok = await saveCombo({ context_length: val });
     if (ok) await fetchAll();
   };
   const handleAddModel = async (model) => {
@@ -315,6 +322,53 @@ export default function ComboDetailPage() {
           <div>
             <Input label="Combo Name" value={name} onChange={(e) => { setName(e.target.value); validateName(e.target.value); }} onBlur={handleSaveName} error={nameError} />
             <p className="text-[10px] text-text-muted mt-0.5">Only letters, numbers, -, _ and .</p>
+          </div>
+          <div>
+            <Input label="Advertised Context Length (optional)" type="number" value={contextLength} onChange={(e) => setContextLength(e.target.value)} onBlur={handleSaveContextLength} placeholder="e.g. 1000000 (leave blank for auto)" />
+            <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+              <span className="text-[10px] text-text-muted">Presets:</span>
+              {[
+                { label: "128k", value: 128000 },
+                { label: "256k", value: 256000 },
+                { label: "512k", value: 512000 },
+                { label: "1M", value: 1000000 },
+                { label: "2M", value: 2000000 },
+              ].map((p) => (
+                <button
+                  key={p.label}
+                  type="button"
+                  onClick={async () => {
+                    setContextLength(String(p.value));
+                    await saveCombo({ context_length: p.value });
+                    await fetchAll();
+                  }}
+                  className={`px-1.5 py-0.5 rounded text-[10px] font-mono transition-colors border ${
+                    Number(contextLength) === p.value
+                      ? "bg-primary/10 border-primary/40 text-primary font-medium"
+                      : "bg-black/[0.03] dark:bg-white/[0.03] border-black/10 dark:border-white/10 text-text-muted hover:border-primary/40 hover:text-text-main"
+                  }`}
+                >
+                  {p.label}
+                </button>
+              ))}
+              {contextLength && (
+                <button
+                  type="button"
+                  onClick={async () => {
+                    setContextLength("");
+                    await saveCombo({ context_length: null });
+                    await fetchAll();
+                  }}
+                  className="px-1.5 py-0.5 rounded text-[10px] text-text-muted hover:text-red-500 transition-colors"
+                >
+                  Clear
+                </button>
+              )}
+            </div>
+            <p className="text-[10px] text-amber-600 dark:text-amber-400 mt-1 flex items-center gap-1">
+              <span className="material-symbols-outlined text-[13px]">warning</span>
+              Note: Advertised context window tokens via /v1/models. Real capacity depends on the underlying models.
+            </p>
           </div>
           <div className="flex items-center justify-between">
             <div>

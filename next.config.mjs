@@ -9,11 +9,17 @@ const tracingRoot = process.env.NEXT_TRACING_ROOT_MODE === "workspace"
   ? join(projectRoot, "..")
   : projectRoot;
 const proxyClientMaxBodySize = process.env.NINEROUTER_PROXY_CLIENT_MAX_BODY_SIZE || "128mb";
+// Comma-separated dev origins override (Next 16 dev-only field, ignored in prod).
+//   VANS_ALLOWED_DEV_ORIGINS=127.0.0.1,localhost,my-host
+const allowedDevOrigins = process.env.VANS_ALLOWED_DEV_ORIGINS
+  ? process.env.VANS_ALLOWED_DEV_ORIGINS.split(",").map((s) => s.trim()).filter(Boolean)
+  : ["127.0.0.1", "localhost"];
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   distDir: process.env.NEXT_DIST_DIR || ".next",
   output: "standalone",
+  allowedDevOrigins,
   serverExternalPackages: ["better-sqlite3", "sql.js", "node:sqlite", "bun:sqlite", "dompurify", "chalk"],
   turbopack: {
     root: tracingRoot
@@ -36,7 +42,17 @@ const nextConfig = {
     // Cache fetch responses across HMR refreshes for faster dev reloads.
     serverComponentsHmrCache: true,
     // Tree-shake heavy barrel imports to cut compile + bundle size
-    optimizePackageImports: ["@xyflow/react", "@dnd-kit/core", "@dnd-kit/sortable", "material-symbols", "marked"],
+    optimizePackageImports: [
+      "@xyflow/react",
+      "@dnd-kit/core",
+      "@dnd-kit/sortable",
+      "@monaco-editor/react",
+      "recharts",
+      "material-symbols",
+      "marked",
+      "@/shared/components",
+      "@/shared/components/layouts",
+    ],
   },
   webpack: (config, { isServer }) => {
     // Ignore fs/path modules in browser bundle
@@ -106,22 +122,30 @@ const nextConfig = {
     ];
   },
   async headers() {
+    // In dev, Turbopack rewrites chunk factories frequently. An immutable
+    // Cache-Control on /_next/static makes the browser reuse stale modules
+    // (module factory not available → unhandledRejection + UI freezes).
+    // Production chunks are content-hashed, so immutable is correct there.
+    const isDev = process.env.NODE_ENV !== "production";
     return [
       {
         // Provider icons (webp), favicons, logos — immutable, hash-stable files.
-        // Browser caches for 1 year; revalidation via Last-Modified/ETag.
         source: "/providers/:path*",
         headers: [
           { key: "Cache-Control", value: "public, max-age=31536000, immutable" },
         ],
       },
-      {
-        // Next.js hashed static assets (JS/CSS chunks) — content-addressed, safe to cache forever.
-        source: "/_next/static/:path*",
-        headers: [
-          { key: "Cache-Control", value: "public, max-age=31536000, immutable" },
-        ],
-      },
+      ...(isDev
+        ? []
+        : [
+            {
+              // Next.js hashed static assets (JS/CSS chunks) — content-addressed.
+              source: "/_next/static/:path*",
+              headers: [
+                { key: "Cache-Control", value: "public, max-age=31536000, immutable" },
+              ],
+            },
+          ]),
     ];
   }
 };
