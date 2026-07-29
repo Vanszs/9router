@@ -389,7 +389,10 @@ export async function isProviderAllowed(apiKeyInfo, providerIdOrAlias) {
   if (!apiKeyInfo) return true;
   const allowed = apiKeyInfo.allowedProviders;
   if (allowed === null || allowed === undefined) return true; // null = all
-  if (!Array.isArray(allowed) || allowed.length === 0) return false; // [] = none
+  if (!Array.isArray(allowed) || allowed.length === 0) {
+    log.warn("AUTH", `Provider "${providerIdOrAlias}" blocked for key ${apiKeyInfo.id?.slice(0, 8)}: allowedProviders is empty`);
+    return false; // [] = none
+  }
   if (allowed.includes(providerIdOrAlias)) return true;
   const alias = getProviderAlias(providerIdOrAlias);
   if (alias !== providerIdOrAlias && allowed.includes(alias)) return true;
@@ -399,6 +402,7 @@ export async function isProviderAllowed(apiKeyInfo, providerIdOrAlias) {
     const prefix = await getNodePrefix(providerIdOrAlias);
     if (prefix && allowed.includes(prefix)) return true;
   }
+  log.warn("AUTH", `Provider "${providerIdOrAlias}" blocked for key ${apiKeyInfo.id?.slice(0, 8)}: allowed=[${allowed.join(", ")}]`);
   return false;
 }
 
@@ -411,8 +415,15 @@ export function isComboAllowed(apiKeyInfo, comboName) {
   const name = comboName.startsWith("combo/") ? comboName.slice(6) : comboName;
   const allowed = apiKeyInfo.allowedCombos;
   if (allowed === null || allowed === undefined) return true;
-  if (!Array.isArray(allowed) || allowed.length === 0) return false;
-  return allowed.includes(name);
+  if (!Array.isArray(allowed) || allowed.length === 0) {
+    log.warn("AUTH", `Combo "${name}" blocked for key ${apiKeyInfo.id?.slice(0, 8)}: allowedCombos is empty`);
+    return false;
+  }
+  const ok = allowed.includes(name);
+  if (!ok) {
+    log.warn("AUTH", `Combo "${name}" blocked for key ${apiKeyInfo.id?.slice(0, 8)}: allowed=[${allowed.join(", ")}]`);
+  }
+  return ok;
 }
 
 /**
@@ -424,7 +435,14 @@ export function isKindAllowed(apiKeyInfo, kind) {
   if (!apiKeyInfo) return true;
   const allowed = apiKeyInfo.allowedKinds;
   if (allowed === null || allowed === undefined) return true; // null = all
-  if (!Array.isArray(allowed) || allowed.length === 0) return false; // [] = none
-  return allowed.includes(kind);
+  if (!Array.isArray(allowed) || allowed.length === 0) {
+    log.warn("AUTH", `Kind "${kind}" blocked for key ${apiKeyInfo.id?.slice(0, 8)}: allowedKinds is empty`);
+    return false; // [] = none
+  }
+  const ok = allowed.includes(kind);
+  if (!ok) {
+    log.warn("AUTH", `Kind "${kind}" blocked for key ${apiKeyInfo.id?.slice(0, 8)}: allowed=[${allowed.join(", ")}]`);
+  }
+  return ok;
 }
 

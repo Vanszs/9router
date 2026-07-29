@@ -39,6 +39,16 @@ export default function APIPageClient({ machineId }) {
   const [editProvidersAll, setEditProvidersAll] = useState(true);
   const [editCombosAll, setEditCombosAll] = useState(true);
   const [editSaving, setEditSaving] = useState(false);
+  // Limit edit state (empty string = unlimited)
+  const [editExpiresAt, setEditExpiresAt] = useState("");
+  const [editMaxTokens, setEditMaxTokens] = useState("");
+  const [editMaxTokensDaily, setEditMaxTokensDaily] = useState("");
+  const [editRpm, setEditRpm] = useState("");
+  const [editRph, setEditRph] = useState("");
+  const [editRpd, setEditRpd] = useState("");
+  const [editTokens5h, setEditTokens5h] = useState("");
+  const [editTokensWeekly, setEditTokensWeekly] = useState("");
+  const [editTokensMonthly, setEditTokensMonthly] = useState("");
   const [providerList, setProviderList] = useState([]);
   const [aliasMap, setAliasMap] = useState({}); // alias → provider ID
   const [comboList, setComboList] = useState([]);
@@ -478,6 +488,15 @@ export default function APIPageClient({ machineId }) {
   const handleOpenEditKey = (key) => {
     setEditingKey(key);
     setEditName(key.name || "");
+    setEditExpiresAt(key.expiresAt ? key.expiresAt.slice(0, 16) : "");
+    setEditMaxTokens(key.maxTokens ?? "");
+    setEditMaxTokensDaily(key.maxTokensDaily ?? "");
+    setEditRpm(key.rpm ?? "");
+    setEditRph(key.rph ?? "");
+    setEditRpd(key.rpd ?? "");
+    setEditTokens5h(key.tokens5h ?? "");
+    setEditTokensWeekly(key.tokensWeekly ?? "");
+    setEditTokensMonthly(key.tokensMonthly ?? "");
     const ap = key.allowedProviders;
     const ac = key.allowedCombos;
     const ak = key.allowedKinds;
@@ -514,10 +533,28 @@ export default function APIPageClient({ machineId }) {
     if (!editingKey) return;
     setEditSaving(true);
     try {
+      const parseNum = (v) => {
+        const s = String(v).trim();
+        if (s === "" || s === "null" || s === "undefined") return null;
+        const n = Number(s);
+        return Number.isFinite(n) && n >= 0 ? n : null;
+      };
       const body = {
+        name: editName.trim() || editingKey.name,
         allowedProviders: editProvidersAll ? null : editProviders,
         allowedCombos: editCombosAll ? null : editCombos,
         allowedKinds: editKindsAll ? null : editKinds,
+        limits: {
+          expiresAt: editExpiresAt ? new Date(editExpiresAt).toISOString() : null,
+          maxTokens: parseNum(editMaxTokens),
+          maxTokensDaily: parseNum(editMaxTokensDaily),
+          rpm: parseNum(editRpm),
+          rph: parseNum(editRph),
+          rpd: parseNum(editRpd),
+          tokens5h: parseNum(editTokens5h),
+          tokensWeekly: parseNum(editTokensWeekly),
+          tokensMonthly: parseNum(editTokensMonthly),
+        },
       };
       const res = await fetch(`/api/keys/${editingKey.id}`, {
         method: "PUT",
@@ -1543,6 +1580,11 @@ export default function APIPageClient({ machineId }) {
                    {key.isActive === false && (
                     <p className="text-xs text-orange-500 mt-1">Paused</p>
                   )}
+                  {key.expiresAt && (
+                    <p className="text-xs text-text-muted mt-1">
+                      Expires {new Date(key.expiresAt).toLocaleString()}
+                    </p>
+                  )}
                    {/* ACL badges */}
                   {(key.allowedProviders || key.allowedCombos || key.allowedKinds) && (
                     <div className="flex flex-wrap gap-1 mt-1">
@@ -1571,6 +1613,14 @@ export default function APIPageClient({ machineId }) {
                           {key.allowedKinds.length === 0 ? "No kinds" : key.allowedKinds.join(", ")}
                         </span>
                       )}
+                      {key.rpm != null && <span className="text-[10px] px-1.5 py-0.5 rounded bg-orange-500/10 text-orange-500 dark:bg-orange-500/20">{key.rpm} RPM</span>}
+                      {key.rph != null && <span className="text-[10px] px-1.5 py-0.5 rounded bg-orange-500/10 text-orange-500 dark:bg-orange-500/20">{key.rph} RPH</span>}
+                      {key.rpd != null && <span className="text-[10px] px-1.5 py-0.5 rounded bg-orange-500/10 text-orange-500 dark:bg-orange-500/20">{key.rpd} RPD</span>}
+                      {key.maxTokens != null && <span className="text-[10px] px-1.5 py-0.5 rounded bg-cyan-500/10 text-cyan-500 dark:bg-cyan-500/20">max {key.maxTokens.toLocaleString()} tokens</span>}
+                      {key.maxTokensDaily != null && <span className="text-[10px] px-1.5 py-0.5 rounded bg-cyan-500/10 text-cyan-500 dark:bg-cyan-500/20">{key.maxTokensDaily.toLocaleString()} tokens/day</span>}
+                      {key.tokens5h != null && <span className="text-[10px] px-1.5 py-0.5 rounded bg-cyan-500/10 text-cyan-500 dark:bg-cyan-500/20">{key.tokens5h.toLocaleString()} tokens/5h</span>}
+                      {key.tokensWeekly != null && <span className="text-[10px] px-1.5 py-0.5 rounded bg-cyan-500/10 text-cyan-500 dark:bg-cyan-500/20">{key.tokensWeekly.toLocaleString()} tokens/week</span>}
+                      {key.tokensMonthly != null && <span className="text-[10px] px-1.5 py-0.5 rounded bg-cyan-500/10 text-cyan-500 dark:bg-cyan-500/20">{key.tokensMonthly.toLocaleString()} tokens/month</span>}
                     </div>
                   )}
                 </div>
@@ -1785,6 +1835,49 @@ export default function APIPageClient({ machineId }) {
             {editCombosAll && <p className="text-xs text-text-muted">This key can access all combos.</p>}
           </div>
 
+          {/* Limits */}
+          <div>
+            <label className="text-sm font-medium mb-2 block">Usage Limits (leave blank for unlimited)</label>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="text-xs text-text-muted">Expiration</label>
+                <Input type="datetime-local" value={editExpiresAt} onChange={(e) => setEditExpiresAt(e.target.value)} />
+              </div>
+              <div>
+                <label className="text-xs text-text-muted">Max tokens / request</label>
+                <Input type="number" min="0" value={editMaxTokens} onChange={(e) => setEditMaxTokens(e.target.value)} placeholder="∞" />
+              </div>
+              <div>
+                <label className="text-xs text-text-muted">Max tokens / day</label>
+                <Input type="number" min="0" value={editMaxTokensDaily} onChange={(e) => setEditMaxTokensDaily(e.target.value)} placeholder="∞" />
+              </div>
+              <div>
+                <label className="text-xs text-text-muted">Requests / minute</label>
+                <Input type="number" min="0" value={editRpm} onChange={(e) => setEditRpm(e.target.value)} placeholder="∞" />
+              </div>
+              <div>
+                <label className="text-xs text-text-muted">Requests / hour</label>
+                <Input type="number" min="0" value={editRph} onChange={(e) => setEditRph(e.target.value)} placeholder="∞" />
+              </div>
+              <div>
+                <label className="text-xs text-text-muted">Requests / day</label>
+                <Input type="number" min="0" value={editRpd} onChange={(e) => setEditRpd(e.target.value)} placeholder="∞" />
+              </div>
+              <div>
+                <label className="text-xs text-text-muted">Tokens / 5 hours</label>
+                <Input type="number" min="0" value={editTokens5h} onChange={(e) => setEditTokens5h(e.target.value)} placeholder="∞" />
+              </div>
+              <div>
+                <label className="text-xs text-text-muted">Tokens / week</label>
+                <Input type="number" min="0" value={editTokensWeekly} onChange={(e) => setEditTokensWeekly(e.target.value)} placeholder="∞" />
+              </div>
+              <div>
+                <label className="text-xs text-text-muted">Tokens / month</label>
+                <Input type="number" min="0" value={editTokensMonthly} onChange={(e) => setEditTokensMonthly(e.target.value)} placeholder="∞" />
+              </div>
+            </div>
+          </div>
+
           {/* ACL info */}
           <div className="text-xs text-text-muted bg-surface-2 rounded-lg p-3 border border-border-subtle">
             <p className="font-medium mb-1">How it works:</p>
@@ -1792,6 +1885,7 @@ export default function APIPageClient({ machineId }) {
               <li><strong>All allowed</strong> = unrestricted (default). No ACL filtering.</li>
               <li><strong>Unchecked + empty</strong> = deny everything of that type.</li>
               <li><strong>Checked items</strong> = only those items are accessible.</li>
+              <li><strong>Usage limits</strong> = leave blank to disable. Applies to requests made with this key.</li>
             </ul>
           </div>
 
@@ -1801,7 +1895,7 @@ export default function APIPageClient({ machineId }) {
               Cancel
             </Button>
             <Button onClick={handleSaveEditKey} fullWidth disabled={editSaving}>
-              {editSaving ? "Saving..." : "Save ACL"}
+              {editSaving ? "Saving..." : "Save"}
             </Button>
           </div>
         </div>
