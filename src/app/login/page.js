@@ -9,12 +9,16 @@ export default function LoginPage() {
   const [resetHint, setResetHint] = useState("");
   const [retryAfter, setRetryAfter] = useState(0);
   const [loading, setLoading] = useState(false);
+  const [passkeyLoading, setPasskeyLoading] = useState(false);
   const [hasPassword, setHasPassword] = useState(null);
   const [authMode, setAuthMode] = useState("password");
   const [oidcConfigured, setOidcConfigured] = useState(false);
   const [oidcLoginLabel, setOidcLoginLabel] = useState("Sign in with OIDC");
   const [mustChange, setMustChange] = useState(false);
   const [newPassword, setNewPassword] = useState("");
+  const [isLocal, setIsLocal] = useState(false);
+  const [passkeysEnabled, setPasskeysEnabled] = useState(false);
+  const [remoteAuthMode, setRemoteAuthMode] = useState("password");
 
   // Countdown for rate-limit
   useEffect(() => {
@@ -46,6 +50,9 @@ export default function LoginPage() {
           setAuthMode(data.authMode || "password");
           setOidcConfigured(data.oidcConfigured === true);
           setOidcLoginLabel(data.oidcLoginLabel || "Sign in with OIDC");
+          setIsLocal(data.isLocal === true);
+          setPasskeysEnabled(data.passkeysEnabled === true);
+          setRemoteAuthMode(data.remoteAuthMode || "password");
         } else {
           // Safe fallback on non-OK response to avoid infinite loading state.
           setHasPassword(true);
@@ -123,8 +130,53 @@ export default function LoginPage() {
     window.location.href = "/api/auth/oidc/start";
   };
 
+  const handlePasskeyLogin = async () => {
+    setPasskeyLoading(true);
+    setError("");
+    try {
+      // Start authentication
+      const startRes = await fetch("/api/auth/passkey/login/start", { method: "POST" });
+      if (!startRes.ok) {
+        const data = await startRes.json();
+        setError(data.error || "Passkey login failed");
+        return;
+      }
+      const options = await startRes.json();
+
+      // Browser API: prompt user for passkey
+      const { startAuthentication } = await import("@/lib/auth/passkeyBrowser.js");
+      const assertion = await startAuthentication({ responseJSON: options });
+
+      // Finish authentication
+      const finishRes = await fetch("/api/auth/passkey/login/finish", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ assertion }),
+      });
+
+      if (finishRes.ok) {
+        window.location.assign("/dashboard");
+      } else {
+        const data = await finishRes.json();
+        setError(data.error || "Passkey verification failed");
+      }
+    } catch (err) {
+      if (err.name === "NotAllowedError") {
+        setError("Passkey authentication was cancelled or timed out.");
+      } else {
+        setError(err.message || "An error occurred during passkey login.");
+      }
+    } finally {
+      setPasskeyLoading(false);
+    }
+  };
+
   const oidcAvailable = oidcConfigured && ["oidc", "both"].includes(authMode);
-  const passwordAvailable = authMode !== "oidc" || !oidcConfigured;
+  const passkeyAvailable = passkeysEnabled && (isLocal || ["passkey", "both"].includes(remoteAuthMode));
+  // On remote: if remoteAuthMode is "passkey" only, hide password
+  const passwordAvailable = isLocal
+    ? (authMode !== "oidc" || !oidcConfigured)
+    : (remoteAuthMode !== "passkey" && (authMode !== "oidc" || !oidcConfigured));
 
   // Show loading state while checking password
   if (hasPassword === null) {
@@ -148,7 +200,9 @@ export default function LoginPage() {
           <p className="text-text-muted">
             {authMode === "oidc" && oidcConfigured
               ? "Sign in with your OIDC provider to access the dashboard"
-              : "Enter your password to access the dashboard"}
+              : passkeyAvailable && !passwordAvailable
+                ? "Sign in with a passkey to access the dashboard"
+                : "Enter your password to access the dashboard"}
           </p>
         </div>
 
@@ -182,13 +236,30 @@ export default function LoginPage() {
               </Button>
             )}
 
-            {oidcAvailable && passwordAvailable && <div className="h-px bg-border/60" />}
+            {oidcAvailable && (passwordAvailable || passkeyAvailable) && <div className="h-px bg-border/60" />}
+
+            {passkeyAvailable && (
+              <Button
+                type="button"
+                variant="primary"
+                className="w-full"
+                onClick={handlePasskeyLogin}
+                loading={passkeyLoading}
+              >
+                <span className="flex items-center justify-center gap-2">
+                  <span className="material-symbols-outlined text-[20px]">key</span>
+                  Sign in with Passkey
+                </span>
+              </Button>
+            )}
+
+            {passkeyAvailable && passwordAvailable && <div className="h-px bg-border/60" />}
 
             {passwordAvailable ? (
               <form onSubmit={handleLogin} className="flex flex-col gap-4">
                 {((authMode === "oidc" && !oidcConfigured) || (authMode === "both" && !oidcConfigured)) && (
                   <p className="text-xs text-amber-600 dark:text-amber-400 text-center">
-                    OIDC login is enabled, but the issuer/client fields are not configured yet. Password login is still available for recovery.
+                    OIDC login is enabled, but the issuer/client fields are not configured yet. Password login is still available.
                   </p>
                 )}
 
@@ -206,7 +277,7 @@ export default function LoginPage() {
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
                     required
-                    autoFocus={!oidcAvailable}
+                    autoFocus={!oidcAvailable && !passkeyAvailable}
                   />
                   {error && <p className="text-xs text-red-500">{error}</p>}
                   {retryAfter > 0 && (

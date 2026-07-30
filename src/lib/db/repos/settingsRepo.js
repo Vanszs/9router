@@ -21,6 +21,8 @@ const DEFAULT_SETTINGS = {
   allowRemoteNoApiKey: false,
   tunnelDashboardAccess: true,
   authMode: "password",
+  remoteAuthMode: "password",
+  passkeysEnabled: false,
   oidcIssuerUrl: "",
   oidcClientId: "",
   oidcClientSecret: "",

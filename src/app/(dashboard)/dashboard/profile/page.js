@@ -57,6 +57,11 @@ export default function ProfilePage() {
   const [proxyStatus, setProxyStatus] = useState({ type: "", message: "" });
   const [proxyLoading, setProxyLoading] = useState(false);
   const [proxyTestLoading, setProxyTestLoading] = useState(false);
+  const [passkeys, setPasskeys] = useState([]);
+  const [passkeyLoading, setPasskeyLoading] = useState(false);
+  const [passkeyStatus, setPasskeyStatus] = useState({ type: "", message: "" });
+  const [passkeyNickname, setPasskeyNickname] = useState("");
+  const [remoteAuthModeForm, setRemoteAuthModeForm] = useState("password");
 
   /* eslint-disable react-hooks/set-state-in-effect --
      Locale sync on mount and bootstrap fetch of /api/settings. setState is
@@ -70,6 +75,7 @@ export default function ProfilePage() {
       .then((res) => res.json())
       .then((data) => {
         setSettings(data);
+        setRemoteAuthModeForm(data?.remoteAuthMode || "password");
         setOidcForm({
           authMode: data?.authMode || "password",
           oidcIssuerUrl: data?.oidcIssuerUrl || "",
@@ -228,6 +234,97 @@ export default function ProfilePage() {
     } finally {
       setPassLoading(false);
     }
+  };
+
+  // Fetch registered passkeys
+  const fetchPasskeys = async () => {
+    try {
+      const res = await fetch("/api/auth/passkey/manage");
+      if (res.ok) {
+        const data = await res.json();
+        setPasskeys(data.passkeys || []);
+      }
+    } catch {}
+  };
+
+  useEffect(() => {
+    fetchPasskeys();
+  }, []);
+
+  const handlePasskeyRegister = async () => {
+    setPasskeyLoading(true);
+    setPasskeyStatus({ type: "", message: "" });
+    try {
+      const startRes = await fetch("/api/auth/passkey/register/start", { method: "POST" });
+      if (!startRes.ok) {
+        const data = await startRes.json();
+        setPasskeyStatus({ type: "error", message: data.error || "Failed to start registration" });
+        return;
+      }
+      const options = await startRes.json();
+
+      const { startRegistration } = await import("@/lib/auth/passkeyBrowser.js");
+      const credential = await startRegistration({ responseJSON: options });
+
+      const finishRes = await fetch("/api/auth/passkey/register/finish", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ credential, nickname: passkeyNickname || null }),
+      });
+
+      if (finishRes.ok) {
+        setPasskeyStatus({ type: "success", message: "Passkey registered successfully" });
+        setPasskeyNickname("");
+        fetchPasskeys();
+        // Refresh settings to reflect passkeysEnabled
+        const settingsRes = await fetch("/api/settings");
+        if (settingsRes.ok) setSettings(await settingsRes.json());
+      } else {
+        const data = await finishRes.json();
+        setPasskeyStatus({ type: "error", message: data.error || "Failed to register passkey" });
+      }
+    } catch (err) {
+      if (err.name === "NotAllowedError") {
+        setPasskeyStatus({ type: "error", message: "Registration was cancelled or timed out" });
+      } else {
+        setPasskeyStatus({ type: "error", message: err.message || "An error occurred" });
+      }
+    } finally {
+      setPasskeyLoading(false);
+    }
+  };
+
+  const handlePasskeyDelete = async (id) => {
+    try {
+      const res = await fetch("/api/auth/passkey/manage", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id }),
+      });
+      if (res.ok) {
+        setPasskeyStatus({ type: "success", message: "Passkey removed" });
+        fetchPasskeys();
+        const settingsRes = await fetch("/api/settings");
+        if (settingsRes.ok) setSettings(await settingsRes.json());
+      } else {
+        const data = await res.json();
+        setPasskeyStatus({ type: "error", message: data.error || "Failed to remove passkey" });
+      }
+    } catch (err) {
+      setPasskeyStatus({ type: "error", message: "An error occurred" });
+    }
+  };
+
+  const handleRemoteAuthModeChange = async (mode) => {
+    setRemoteAuthModeForm(mode);
+    try {
+      await fetch("/api/settings", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ remoteAuthMode: mode }),
+      });
+      setSettings((prev) => ({ ...prev, remoteAuthMode: mode }));
+    } catch {}
   };
 
   const updateFallbackStrategy = async (strategy) => {
@@ -751,6 +848,131 @@ export default function ProfilePage() {
                   </Button>
                 </div>
               </form>
+            )}
+          </div>
+        </Card>
+
+        {/* Passkey Authentication */}
+        <Card>
+          <div className="flex items-center gap-3 mb-4">
+            <div className="p-2 rounded-lg bg-green-500/10 text-green-500 shrink-0">
+              <span className="material-symbols-outlined text-[20px]">key</span>
+            </div>
+            <div className="flex-1 min-w-0">
+              <h3 className="text-base sm:text-lg font-semibold">Passkey Authentication</h3>
+              <p className="text-xs text-text-muted">
+                Sign in with biometrics or security keys (WebAuthn / FIDO2). Works with Google Password Manager, Apple iCloud Keychain, and Windows Hello.
+              </p>
+            </div>
+          </div>
+
+          <div className="flex flex-col gap-4">
+            {/* Remote auth mode selector */}
+            <div className="flex flex-col gap-2">
+              <label className="text-xs sm:text-sm font-medium">Remote Authentication Mode</label>
+              <p className="text-xs text-text-muted mb-1">
+                What login methods are available to non-localhost users. Localhost always has full access.
+              </p>
+              <div className="flex flex-wrap gap-2">
+                {[
+                  { value: "password", label: "Password only" },
+                  { value: "passkey", label: "Passkey only" },
+                  { value: "both", label: "Password + Passkey" },
+                ].map((opt) => (
+                  <button
+                    key={opt.value}
+                    type="button"
+                    onClick={() => handleRemoteAuthModeChange(opt.value)}
+                    disabled={opt.value !== "password" && passkeys.length === 0}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+                      remoteAuthModeForm === opt.value
+                        ? "bg-primary text-white"
+                        : "bg-sidebar text-text-muted hover:text-text-main"
+                    } disabled:opacity-40 disabled:cursor-not-allowed`}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+              {passkeys.length === 0 && remoteAuthModeForm !== "password" && (
+                <p className="text-xs text-amber-600 dark:text-amber-400">
+                  Register at least one passkey before switching to passkey-only mode.
+                </p>
+              )}
+            </div>
+
+            <div className="h-px bg-border/50" />
+
+            {/* Register new passkey */}
+            <div className="flex flex-col gap-2">
+              <label className="text-xs sm:text-sm font-medium">Register New Passkey</label>
+              <div className="flex gap-2">
+                <Input
+                  type="text"
+                  placeholder="Nickname (optional, e.g. 'MacBook Touch ID')"
+                  value={passkeyNickname}
+                  onChange={(e) => setPasskeyNickname(e.target.value)}
+                  className="flex-1"
+                />
+                <Button
+                  type="button"
+                  variant="primary"
+                  onClick={handlePasskeyRegister}
+                  loading={passkeyLoading}
+                >
+                  Add Passkey
+                </Button>
+              </div>
+              {passkeyStatus.message && (
+                <p className={`text-xs ${passkeyStatus.type === "error" ? "text-red-500" : "text-green-500"}`}>
+                  {passkeyStatus.message}
+                </p>
+              )}
+              <p className="text-xs text-text-muted">
+                Requires HTTPS or localhost. Your browser will prompt you to create a passkey.
+              </p>
+            </div>
+
+            {/* Registered passkeys list */}
+            {passkeys.length > 0 && (
+              <div className="flex flex-col gap-2">
+                <label className="text-xs sm:text-sm font-medium">Registered Passkeys ({passkeys.length})</label>
+                <div className="flex flex-col gap-2">
+                  {passkeys.map((pk) => (
+                    <div
+                      key={pk.id}
+                      className="flex items-center gap-3 p-3 rounded-lg bg-sidebar/50 border border-border/50"
+                    >
+                      <span className="material-symbols-outlined text-text-muted text-[18px]">
+                        {pk.transports?.includes("internal") ? "fingerprint" : "usb"}
+                      </span>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium truncate">
+                          {pk.nickname || `Passkey (${pk.id.slice(0, 8)}...)`}
+                        </p>
+                        <p className="text-xs text-text-muted">
+                          {pk.deviceType === "multiDevice" ? "Cross-device" : "Single device"}
+                          {pk.lastUsedAt ? ` · Last used: ${new Date(pk.lastUsedAt).toLocaleDateString()}` : " · Never used"}
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => handlePasskeyDelete(pk.id)}
+                        className="text-red-500 hover:text-red-600 p-1"
+                        title="Remove passkey"
+                      >
+                        <span className="material-symbols-outlined text-[18px]">delete</span>
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {passkeys.length === 0 && (
+              <p className="text-xs text-text-muted italic">
+                No passkeys registered yet. Add one to enable passwordless login.
+              </p>
             )}
           </div>
         </Card>
