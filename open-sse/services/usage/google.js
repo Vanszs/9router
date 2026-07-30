@@ -159,49 +159,50 @@ export async function getAntigravityUsage(accessToken, providerSpecificData, pro
 
     // Parse model quotas (inspired by vscode-antigravity-cockpit)
     if (data.models) {
-      // Filter only recommended/important models (must match PROVIDER_MODELS ag ids)
-      const importantModels = [
-        'gemini-3-flash-agent',
-        'gemini-3.5-flash-low',
-        'gemini-3.5-flash-extra-low',
-        'gemini-pro-agent',
-        'gemini-3.1-pro-low',
-        'claude-sonnet-4-6',
-        'claude-opus-4-6-thinking',
-        'gpt-oss-120b-medium',
-        'gemini-3-flash',
-        // Image generation models
-        'gemini-3.1-flash-image',
-        'gemini-3-pro-image',
-      ];
+      let geminiModel = null;
+      let claudeModel = null;
 
       for (const [modelKey, info] of Object.entries(data.models)) {
-        // Skip models without quota info
-        if (!info.quotaInfo) {
-          continue;
+        if (!info.quotaInfo) continue;
+        
+        if (!geminiModel && modelKey.includes('gemini')) {
+          geminiModel = info;
+        } else if (!claudeModel && (modelKey.includes('claude') || modelKey.includes('gpt'))) {
+          claudeModel = info;
         }
+      }
 
-        // Skip internal models and non-important models
-        if (info.isInternal || !importantModels.includes(modelKey)) {
-          continue;
-        }
-
-        const remainingFraction = info.quotaInfo.remainingFraction || 0;
+      if (geminiModel) {
+        const remainingFraction = geminiModel.quotaInfo.remainingFraction || 0;
         const remainingPercentage = remainingFraction * 100;
-
-        // Convert percentage to used/total for UI compatibility
-        const total = 1000; // Normalized base
+        const total = 1000;
         const remaining = Math.round(total * remainingFraction);
         const used = total - remaining;
 
-        // Use modelKey as key (matches PROVIDER_MODELS id)
-        quotas[modelKey] = {
+        quotas['gemini_bucket'] = {
           used,
           total,
-          resetAt: parseResetTime(info.quotaInfo.resetTime),
+          resetAt: parseResetTime(geminiModel.quotaInfo.resetTime),
           remainingPercentage,
           unlimited: false,
-          displayName: info.displayName || modelKey,
+          displayName: "Gemini Models",
+        };
+      }
+
+      if (claudeModel) {
+        const remainingFraction = claudeModel.quotaInfo.remainingFraction || 0;
+        const remainingPercentage = remainingFraction * 100;
+        const total = 1000;
+        const remaining = Math.round(total * remainingFraction);
+        const used = total - remaining;
+
+        quotas['claude_gpt_bucket'] = {
+          used,
+          total,
+          resetAt: parseResetTime(claudeModel.quotaInfo.resetTime),
+          remainingPercentage,
+          unlimited: false,
+          displayName: "Claude and GPT models",
         };
       }
     }
