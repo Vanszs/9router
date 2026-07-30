@@ -38,10 +38,24 @@ export default function APIPageClient({ machineId }) {
   const [editKindsAll, setEditKindsAll] = useState(true); // null = all
   const [editProvidersAll, setEditProvidersAll] = useState(true);
   const [editCombosAll, setEditCombosAll] = useState(true);
+  const [editModelsAll, setEditModelsAll] = useState(true);
+  const [editModels, setEditModels] = useState([]); // selected model ids (provider/model)
+  const [editModelsByProvider, setEditModelsByProvider] = useState({}); // providerId → [modelId]
   const [editSaving, setEditSaving] = useState(false);
+  // Limit edit state (empty string = unlimited)
+  const [editExpiresAt, setEditExpiresAt] = useState("");
+  const [editMaxTokens, setEditMaxTokens] = useState("");
+  const [editMaxTokensDaily, setEditMaxTokensDaily] = useState("");
+  const [editRpm, setEditRpm] = useState("");
+  const [editRph, setEditRph] = useState("");
+  const [editRpd, setEditRpd] = useState("");
+  const [editTokens5h, setEditTokens5h] = useState("");
+  const [editTokensWeekly, setEditTokensWeekly] = useState("");
+  const [editTokensMonthly, setEditTokensMonthly] = useState("");
   const [providerList, setProviderList] = useState([]);
   const [aliasMap, setAliasMap] = useState({}); // alias → provider ID
   const [comboList, setComboList] = useState([]);
+  const [allModelsCatalog, setAllModelsCatalog] = useState([]); // {id, provider, model}[]
 
   const [requireApiKey, setRequireApiKey] = useState(false);
   const [allowRemoteNoApiKey, setAllowRemoteNoApiKey] = useState(false);
@@ -256,6 +270,10 @@ export default function APIPageClient({ machineId }) {
       const tsUrlVal = data.tailscale?.tunnelUrl || "";
       setTsUrl(tsUrlVal);
       setTsEnabled(tsEn);
+      if (data.tailscale?.authUrl) {
+        setTsAuthUrl(data.tailscale.authUrl);
+        setTsAuthLabel("Open Login Page");
+      }
       updateReachable(null, tsClientReachableRef, tsMissRef, setTsReachable, tsEverReachableRef, setTsEverReachable);
     } catch { /* ignore poll errors */ }
   };
@@ -297,6 +315,10 @@ export default function APIPageClient({ machineId }) {
         const tsUrlVal = data.tailscale?.tunnelUrl || "";
         setTsUrl(tsUrlVal);
         setTsEnabled(tsEn);
+        if (data.tailscale?.authUrl) {
+          setTsAuthUrl(data.tailscale.authUrl);
+          setTsAuthLabel("Open Login Page");
+        }
         updateReachable(null, tsClientReachableRef, tsMissRef, setTsReachable, tsEverReachableRef, setTsEverReachable);
       }
     } catch (error) {
@@ -475,17 +497,30 @@ export default function APIPageClient({ machineId }) {
     }).sort((a, b) => a.displayName.localeCompare(b.displayName));
   };
 
-  const handleOpenEditKey = (key) => {
+  const handleOpenEditKey = async (key) => {
     setEditingKey(key);
     setEditName(key.name || "");
+    setEditExpiresAt(key.expiresAt ? key.expiresAt.slice(0, 16) : "");
+    setEditMaxTokens(key.maxTokens ?? "");
+    setEditMaxTokensDaily(key.maxTokensDaily ?? "");
+    setEditRpm(key.rpm ?? "");
+    setEditRph(key.rph ?? "");
+    setEditRpd(key.rpd ?? "");
+    setEditTokens5h(key.tokens5h ?? "");
+    setEditTokensWeekly(key.tokensWeekly ?? "");
+    setEditTokensMonthly(key.tokensMonthly ?? "");
     const ap = key.allowedProviders;
     const ac = key.allowedCombos;
     const ak = key.allowedKinds;
+    const am = key.allowedModels;
     setEditProvidersAll(!ap);
     setEditCombosAll(!ac);
     setEditKindsAll(!ak);
+    setEditModelsAll(!am);
     setEditCombos(ac || []);
     setEditKinds(ak || []);
+    setEditModels(am || []);
+    setEditModelsByProvider({});
 
     // Resolve stored ACL provider values to provider IDs in our list
     // Stored values can be: full provider ID, prefix (e.g. "tr"), or alias (e.g. "oc", "qd", "kc")
@@ -508,16 +543,52 @@ export default function APIPageClient({ machineId }) {
     } else {
       setEditProviders([]);
     }
+
+    // Lazy-load model catalog for per-provider model ACL
+    if (allModelsCatalog.length === 0) {
+      try {
+        const res = await fetch("/api/models", { cache: "no-store" });
+        if (res.ok) {
+          const data = await res.json();
+          const list = Array.isArray(data?.models) ? data.models : [];
+          setAllModelsCatalog(list.map((m) => ({
+            id: m.id || `${m.provider}/${m.model}`,
+            provider: m.provider || (m.id || "").split("/")[0],
+            model: m.model || (m.id || "").split("/").slice(1).join("/"),
+            alias: m.alias || null,
+          })));
+        }
+      } catch { /* ignore */ }
+    }
   };
 
   const handleSaveEditKey = async () => {
     if (!editingKey) return;
     setEditSaving(true);
     try {
+      const parseNum = (v) => {
+        const s = String(v).trim();
+        if (s === "" || s === "null" || s === "undefined") return null;
+        const n = Number(s);
+        return Number.isFinite(n) && n >= 0 ? n : null;
+      };
       const body = {
+        name: editName.trim() || editingKey.name,
         allowedProviders: editProvidersAll ? null : editProviders,
         allowedCombos: editCombosAll ? null : editCombos,
         allowedKinds: editKindsAll ? null : editKinds,
+        allowedModels: editModelsAll ? null : editModels,
+        limits: {
+            expiresAt: editExpiresAt ? new Date(editExpiresAt).toISOString() : null,
+            maxTokens: parseNum(editMaxTokens),
+            maxTokensDaily: parseNum(editMaxTokensDaily),
+            rpm: parseNum(editRpm),
+            rph: parseNum(editRph),
+            rpd: parseNum(editRpd),
+            tokens5h: parseNum(editTokens5h),
+            tokensWeekly: parseNum(editTokensWeekly),
+            tokensMonthly: parseNum(editTokensMonthly),
+          },
       };
       const res = await fetch(`/api/keys/${editingKey.id}`, {
         method: "PUT",
@@ -546,6 +617,16 @@ export default function APIPageClient({ machineId }) {
 
   const toggleEditKind = (kind) => {
     setEditKinds((prev) => prev.includes(kind) ? prev.filter((k) => k !== kind) : [...prev, kind]);
+  };
+
+  const toggleEditModel = (modelId) => {
+    setEditModels((prev) => prev.includes(modelId) ? prev.filter((m) => m !== modelId) : [...prev, modelId]);
+  };
+
+  const modelsForProvider = (providerId) => {
+    const p = providerList.find((x) => x.id === providerId);
+    const aliases = new Set([providerId, p?.alias, p?.prefix].filter(Boolean));
+    return allModelsCatalog.filter((m) => aliases.has(m.provider) || (m.id || "").startsWith(`${providerId}/`) || (p?.alias && (m.id || "").startsWith(`${p.alias}/`)));
   };
 
   const fetchData = async () => {
@@ -808,9 +889,13 @@ export default function APIPageClient({ machineId }) {
 
       if (res.ok && data.success) {
         setTsUrl(data.tunnelUrl || "");
-        const reachable = await pingTsHealth(data.tunnelUrl);
+        let reachable = false;
+        if (data.tunnelUrl) {
+          reachable = await pingTsHealth(data.tunnelUrl);
+        }
         setTsEnabled(true);
-        setTsStatus(reachable ? null : { type: "warning", message: "Connected but not reachable yet." });
+        setTsReachable(reachable);
+        setTsStatus(reachable ? null : { type: "warning", message: data.tunnelUrl ? "Connected but not reachable yet." : "Tailscale connected, but no Funnel URL was returned yet." });
         return;
       }
 
@@ -830,9 +915,10 @@ export default function APIPageClient({ machineId }) {
                 const data2 = await res2.json();
                 if (res2.ok && data2.success) {
                   setTsUrl(data2.tunnelUrl || "");
-                  const ok2 = await pingTsHealth(data2.tunnelUrl);
+                  const ok2 = data2.tunnelUrl ? await pingTsHealth(data2.tunnelUrl) : false;
                   setTsEnabled(true);
-                  setTsStatus(ok2 ? null : { type: "warning", message: "Connected but not reachable yet." });
+                  setTsReachable(ok2);
+                  setTsStatus(ok2 ? null : { type: "warning", message: data2.tunnelUrl ? "Connected but not reachable yet." : "Tailscale connected, but no Funnel URL was returned yet." });
                 } else if (data2.funnelNotEnabled && data2.enableUrl) {
                   await pollFunnelEnable(data2.enableUrl);
                 } else {
@@ -843,8 +929,7 @@ export default function APIPageClient({ machineId }) {
             }
           } catch { /* retry */ }
         }
-        clearUserAuth();
-        setTsStatus({ type: "error", message: "Login timed out. Please try again." });
+        setTsStatus({ type: "warning", message: "Login is still pending. Open the login page, then click Enable again after logging in." });
         return;
       }
 
@@ -860,7 +945,6 @@ export default function APIPageClient({ machineId }) {
       setTsLoading(false);
       setTsConnecting(false);
       setTsProgress("");
-      clearUserAuth();
     }
   };
 
@@ -875,9 +959,10 @@ export default function APIPageClient({ machineId }) {
         if (res.ok && data.success) {
           clearUserAuth();
           setTsUrl(data.tunnelUrl || "");
-          const ok3 = await pingTsHealth(data.tunnelUrl);
+          const ok3 = data.tunnelUrl ? await pingTsHealth(data.tunnelUrl) : false;
           setTsEnabled(true);
-          setTsStatus(ok3 ? null : { type: "warning", message: "Connected but not reachable yet." });
+          setTsReachable(ok3);
+          setTsStatus(ok3 ? null : { type: "warning", message: data.tunnelUrl ? "Connected but not reachable yet." : "Tailscale connected, but no Funnel URL was returned yet." });
           return;
         }
         if (data.funnelNotEnabled) continue;
@@ -988,6 +1073,37 @@ export default function APIPageClient({ machineId }) {
   const maskKey = (fullKey) => {
     if (!fullKey || fullKey.length <= 10) return fullKey || "";
     return fullKey.slice(0, 6) + "•".repeat(fullKey.length - 10) + fullKey.slice(-4);
+  };
+
+
+  const formatQuotaValue = (value) => {
+    if (value === null || value === undefined) return "∞";
+    return Number(value).toLocaleString();
+  };
+
+  const getKeyStatusMeta = (key) => {
+    const status = key.usage?.status || (key.isActive === false ? "paused" : "ok");
+    const map = {
+      ok: { label: "Healthy", icon: "check_circle", cls: "bg-green-500/10 text-green-600 dark:text-green-400" },
+      warning: { label: "Watch", icon: "warning", cls: "bg-yellow-500/10 text-yellow-600 dark:text-yellow-400" },
+      danger: { label: "Near limit", icon: "error", cls: "bg-orange-500/10 text-orange-600 dark:text-orange-400" },
+      blocked: { label: "Blocked", icon: "block", cls: "bg-red-500/10 text-red-600 dark:text-red-400" },
+      paused: { label: "Paused", icon: "pause_circle", cls: "bg-slate-500/10 text-slate-500" },
+    };
+    return map[status] || map.ok;
+  };
+
+  const quotaMetrics = (key) => {
+    const metrics = key.usage?.metrics || {};
+    return ["rpm", "rph", "rpd", "maxTokensDaily", "tokens5h", "tokensWeekly", "tokensMonthly"]
+      .map((id) => ({ id, ...(metrics[id] || {}) }))
+      .filter((m) => m.limit !== null && m.limit !== undefined);
+  };
+
+  const quotaBarClass = (status) => {
+    if (status === "blocked" || status === "danger") return "bg-red-500";
+    if (status === "warning") return "bg-yellow-500";
+    return "bg-primary";
   };
 
   const toggleKeyVisibility = (keyId) => {
@@ -1172,6 +1288,15 @@ export default function APIPageClient({ machineId }) {
                   <span className="material-symbols-outlined animate-spin text-sm">progress_activity</span>
                   {tsEverReachable ? "Tailscale reconnecting..." : "Tailscale checking..."}
                 </div>
+                {tsAuthUrl && (
+                  <Button
+                    size="sm"
+                    icon="open_in_new"
+                    onClick={() => window.open(tsAuthUrl, "tailscale_auth", "width=600,height=700,noopener,noreferrer")}
+                  >
+                    {tsAuthLabel || "Open Login Page"}
+                  </Button>
+                )}
                 <button
                   onClick={() => setShowDisableTsModal(true)}
                   className="p-2 hover:bg-red-500/10 rounded text-red-500 transition-colors shrink-0"
@@ -1495,6 +1620,23 @@ export default function APIPageClient({ machineId }) {
           </div>
         )}
 
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4">
+          <div className="rounded-xl border border-border/50 bg-surface/40 p-4">
+            <p className="text-xs text-text-muted">Total keys</p>
+            <p className="text-2xl font-semibold mt-1">{keys.length}</p>
+          </div>
+          <div className="rounded-xl border border-border/50 bg-surface/40 p-4">
+            <p className="text-xs text-text-muted">Active</p>
+            <p className="text-2xl font-semibold mt-1 text-green-500">{keys.filter((k) => k.isActive !== false).length}</p>
+          </div>
+          <div className="rounded-xl border border-border/50 bg-surface/40 p-4">
+            <p className="text-xs text-text-muted">Needs attention</p>
+            <p className="text-2xl font-semibold mt-1 text-orange-500">
+              {keys.filter((k) => ["warning", "danger", "blocked", "paused"].includes(k.usage?.status || (k.isActive === false ? "paused" : "ok"))).length}
+            </p>
+          </div>
+        </div>
+
         {keys.length === 0 ? (
           <div className="text-center py-12">
             <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-primary/10 text-primary mb-4">
@@ -1507,110 +1649,125 @@ export default function APIPageClient({ machineId }) {
             </Button>
           </div>
         ) : (
-          <div className="flex flex-col">
-            {keys.map((key) => (
-              <div
-                key={key.id}
-                className={`group flex items-center justify-between py-3 border-b border-black/[0.03] dark:border-white/[0.03] last:border-b-0 ${key.isActive === false ? "opacity-60" : ""}`}
-              >
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-medium">{key.name}</p>
-                  <div className="flex items-center gap-2 mt-1">
-                    <code className="text-xs text-text-muted font-mono">
-                      {visibleKeys.has(key.id) ? key.key : maskKey(key.key)}
-                    </code>
-                    <button
-                      onClick={() => toggleKeyVisibility(key.id)}
-                      className="p-1 hover:bg-black/5 dark:hover:bg-white/5 rounded text-text-muted hover:text-primary opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-all"
-                      title={visibleKeys.has(key.id) ? "Hide key" : "Show key"}
-                    >
-                      <span className="material-symbols-outlined text-[14px]">
-                        {visibleKeys.has(key.id) ? "visibility_off" : "visibility"}
-                      </span>
-                    </button>
-                    <button
-                      onClick={() => copy(key.key, key.id)}
-                      className="p-1 hover:bg-black/5 dark:hover:bg-white/5 rounded text-text-muted hover:text-primary opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-all"
-                    >
-                      <span className="material-symbols-outlined text-[14px]">
-                        {copied === key.id ? "check" : "content_copy"}
-                      </span>
-                    </button>
-                  </div>
-                  <p className="text-xs text-text-muted mt-1">
-                    Created {new Date(key.createdAt).toLocaleDateString()}
-                  </p>
-                   {key.isActive === false && (
-                    <p className="text-xs text-orange-500 mt-1">Paused</p>
-                  )}
-                   {/* ACL badges */}
-                  {(key.allowedProviders || key.allowedCombos || key.allowedKinds) && (
-                    <div className="flex flex-wrap gap-1 mt-1">
-                      {key.allowedProviders && (
-                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-500 dark:bg-blue-500/20" title={key.allowedProviders.join(", ")}>
-                          {key.allowedProviders.length === 0
-                            ? "No providers"
-                            : key.allowedProviders.map((stored) => {
-                                // Try providerList first (has connections)
-                                const p = providerList.find((pp) => pp.id === stored || pp.alias === stored || pp.prefix === stored);
-                                if (p) return p.displayName;
-                                // Try aliasMap for providers without connections
-                                const resolved = aliasMap[stored];
-                                if (resolved) return resolved;
-                                return stored;
-                              }).join(", ")}
+          <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+            {keys.map((key) => {
+              const statusMeta = getKeyStatusMeta(key);
+              const metrics = quotaMetrics(key);
+              return (
+                <div
+                  key={key.id}
+                  className={`group rounded-2xl border border-border/60 bg-surface/50 p-4 shadow-sm ${key.isActive === false ? "opacity-70" : ""}`}
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <p className="text-sm font-semibold truncate">{key.name}</p>
+                        <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium ${statusMeta.cls}`}>
+                          <span className="material-symbols-outlined text-[13px]">{statusMeta.icon}</span>
+                          {statusMeta.label}
                         </span>
-                      )}
-                      {key.allowedCombos && (
-                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-purple-500/10 text-purple-500 dark:bg-purple-500/20">
-                          {key.allowedCombos.length === 0 ? "No combos" : key.allowedCombos.join(", ")}
-                        </span>
-                      )}
-                      {key.allowedKinds && (
-                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-green-500/10 text-green-500 dark:bg-green-500/20">
-                          {key.allowedKinds.length === 0 ? "No kinds" : key.allowedKinds.join(", ")}
-                        </span>
-                      )}
+                      </div>
+                      <div className="flex items-center gap-2 mt-2">
+                        <code className="text-xs text-text-muted font-mono truncate">
+                          {visibleKeys.has(key.id) ? key.key : maskKey(key.key)}
+                        </code>
+                        <button
+                          onClick={() => toggleKeyVisibility(key.id)}
+                          className="p-1 hover:bg-black/5 dark:hover:bg-white/5 rounded text-text-muted hover:text-primary transition-all"
+                          title={visibleKeys.has(key.id) ? "Hide key" : "Show key"}
+                        >
+                          <span className="material-symbols-outlined text-[14px]">
+                            {visibleKeys.has(key.id) ? "visibility_off" : "visibility"}
+                          </span>
+                        </button>
+                        <button
+                          onClick={() => copy(key.key, key.id)}
+                          className="p-1 hover:bg-black/5 dark:hover:bg-white/5 rounded text-text-muted hover:text-primary transition-all"
+                        >
+                          <span className="material-symbols-outlined text-[14px]">
+                            {copied === key.id ? "check" : "content_copy"}
+                          </span>
+                        </button>
+                      </div>
+                      <p className="text-xs text-text-muted mt-1">
+                        Created {new Date(key.createdAt).toLocaleDateString()}
+                        {key.expiresAt ? ` · Expires ${new Date(key.expiresAt).toLocaleString()}` : " · No expiry"}
+                      </p>
                     </div>
-                  )}
-                </div>
-                <div className="flex items-center gap-2">
-                  {/* Edit ACL button */}
-                  <button
-                    onClick={() => handleOpenEditKey(key)}
-                    className="p-2 hover:bg-primary/10 rounded text-primary opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-all"
-                    title="Edit access control"
-                  >
-                    <span className="material-symbols-outlined text-[18px]">tune</span>
-                  </button>
-                  <Toggle
-                    size="sm"
-                    checked={key.isActive ?? true}
-                    onChange={(checked) => {
-                      if (key.isActive && !checked) {
-                        setConfirmState({
-                          title: "Pause API Key",
-                          message: `Pause API key "${key.name}"?\n\nThis key will stop working immediately but can be resumed later.`,
-                          onConfirm: async () => {
-                            setConfirmState(null);
+                    <div className="flex items-center gap-2 shrink-0">
+                      <button
+                        onClick={() => handleOpenEditKey(key)}
+                        className="p-2 hover:bg-primary/10 rounded text-primary transition-all"
+                        title="Edit access control and limits"
+                      >
+                        <span className="material-symbols-outlined text-[18px]">tune</span>
+                      </button>
+                      <Toggle
+                        size="sm"
+                        checked={key.isActive ?? true}
+                        onChange={(checked) => {
+                          if (key.isActive && !checked) {
+                            setConfirmState({
+                              title: "Pause API Key",
+                              message: `Pause API key "${key.name}"?
+
+This key will stop working immediately but can be resumed later.`,
+                              onConfirm: async () => {
+                                setConfirmState(null);
+                                handleToggleKey(key.id, checked);
+                              }
+                            });
+                          } else {
                             handleToggleKey(key.id, checked);
                           }
-                        });
-                      } else {
-                        handleToggleKey(key.id, checked);
-                      }
-                    }}
-                    title={key.isActive ? "Pause key" : "Resume key"}
-                  />
-                  <button
-                    onClick={() => handleDeleteKey(key.id)}
-                    className="p-2 hover:bg-red-500/10 rounded text-red-500 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-all"
-                  >
-                    <span className="material-symbols-outlined text-[18px]">delete</span>
-                  </button>
+                        }}
+                        title={key.isActive ? "Pause key" : "Resume key"}
+                      />
+                      <button
+                        onClick={() => handleDeleteKey(key.id)}
+                        className="p-2 hover:bg-red-500/10 rounded text-red-500 transition-all"
+                      >
+                        <span className="material-symbols-outlined text-[18px]">delete</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    {metrics.length === 0 ? (
+                      <div className="sm:col-span-2 rounded-xl border border-dashed border-border/70 p-3 text-xs text-text-muted">
+                        No quota limits configured. This key is only gated by active/paused state and ACL rules.
+                      </div>
+                    ) : metrics.map((metric) => (
+                      <div key={metric.id} className="rounded-xl border border-border/40 bg-background/40 p-3">
+                        <div className="flex items-center justify-between gap-2 mb-2">
+                          <span className="text-xs font-medium truncate">{metric.label}</span>
+                          <span className="text-[11px] text-text-muted">
+                            {formatQuotaValue(metric.used)} / {formatQuotaValue(metric.limit)}
+                          </span>
+                        </div>
+                        <div className="h-2 rounded-full bg-border/50 overflow-hidden">
+                          <div
+                            className={`h-full rounded-full ${quotaBarClass(metric.status)}`}
+                            style={{ width: `${Math.min(100, metric.percent || 0)}%` }}
+                          />
+                        </div>
+                        <div className="flex items-center justify-between mt-1 text-[10px] text-text-muted">
+                          <span>{metric.percent ?? 0}% used</span>
+                          <span>{formatQuotaValue(metric.remaining)} left</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
+                  <div className="flex flex-wrap gap-1.5 mt-4">
+                    {key.allowedProviders && <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-500">{key.allowedProviders.length === 0 ? "No providers" : `${key.allowedProviders.length} providers`}</span>}
+                    {key.allowedCombos && <span className="text-[10px] px-1.5 py-0.5 rounded bg-purple-500/10 text-purple-500">{key.allowedCombos.length === 0 ? "No combos" : `${key.allowedCombos.length} combos`}</span>}
+                    {key.allowedKinds && <span className="text-[10px] px-1.5 py-0.5 rounded bg-green-500/10 text-green-500">{key.allowedKinds.length === 0 ? "No kinds" : key.allowedKinds.join(", ")}</span>}
+                    {key.allowedModels && <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-600 dark:text-amber-300">{key.allowedModels.length === 0 ? "No models" : `${key.allowedModels.length} models`}</span>}
+                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </Card>
@@ -1754,6 +1911,62 @@ export default function APIPageClient({ machineId }) {
             {editProvidersAll && <p className="text-xs text-text-muted">This key can access all providers ({providerList.length}).</p>}
           </div>
 
+          {/* Per-provider models */}
+          <div>
+            <div className="flex items-center justify-between mb-2">
+              <label className="text-sm font-medium">Models</label>
+              <label className="flex items-center gap-1.5 text-xs cursor-pointer">
+                <input type="checkbox" checked={editModelsAll} onChange={(e) => setEditModelsAll(e.target.checked)} />
+                <span className="text-text-muted">All allowed</span>
+              </label>
+            </div>
+            {!editModelsAll && (
+              <div className="max-h-72 overflow-y-auto border border-border-subtle rounded-lg p-2 space-y-2">
+                {(editProvidersAll ? providerList : providerList.filter((p) => editProviders.includes(p.id))).length === 0 ? (
+                  <p className="text-xs text-text-muted p-2">No providers selected.</p>
+                ) : (
+                  (editProvidersAll ? providerList : providerList.filter((p) => editProviders.includes(p.id))).map((p) => {
+                    const models = modelsForProvider(p.id);
+                    const open = !!editModelsByProvider[p.id];
+                    return (
+                      <div key={p.id} className="border border-border-subtle rounded-md">
+                        <button
+                          type="button"
+                          onClick={() => setEditModelsByProvider((prev) => ({ ...prev, [p.id]: !prev[p.id] }))}
+                          className="w-full flex items-center justify-between px-2 py-1.5 text-xs hover:bg-surface-2 rounded-md"
+                        >
+                          <span className="font-medium">{p.displayName}</span>
+                          <span className="text-text-muted text-[10px]">
+                            {models.filter((m) => editModels.includes(m.id)).length}/{models.length || "?"}
+                            <span className="material-symbols-outlined text-sm align-middle ml-1">{open ? "expand_less" : "expand_more"}</span>
+                          </span>
+                        </button>
+                        {open && (
+                          <div className="px-2 pb-2 space-y-1">
+                            {models.length === 0 ? (
+                              <p className="text-[10px] text-text-muted px-1">No models listed for this provider.</p>
+                            ) : (
+                              models.map((m) => {
+                                const checked = editModels.includes(m.id);
+                                return (
+                                  <label key={m.id} className={`flex items-center gap-2 px-2 py-1 rounded text-[11px] cursor-pointer ${checked ? "bg-primary/10 text-primary" : "hover:bg-surface-2"}`}>
+                                    <input type="checkbox" checked={checked} onChange={() => toggleEditModel(m.id)} className="rounded" />
+                                    <span className="font-mono truncate">{m.alias || m.id}</span>
+                                  </label>
+                                );
+                              })
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+            )}
+            {editModelsAll && <p className="text-xs text-text-muted">This key can access all models of allowed providers.</p>}
+          </div>
+
           {/* Combos */}
           <div>
             <div className="flex items-center justify-between mb-2">
@@ -1785,6 +1998,49 @@ export default function APIPageClient({ machineId }) {
             {editCombosAll && <p className="text-xs text-text-muted">This key can access all combos.</p>}
           </div>
 
+          {/* Limits */}
+          <div>
+            <label className="text-sm font-medium mb-2 block">Usage Limits (leave blank for unlimited)</label>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="text-xs text-text-muted">Expiration</label>
+                <Input type="datetime-local" value={editExpiresAt} onChange={(e) => setEditExpiresAt(e.target.value)} />
+              </div>
+              <div>
+                <label className="text-xs text-text-muted">Max tokens / request</label>
+                <Input type="number" min="0" value={editMaxTokens} onChange={(e) => setEditMaxTokens(e.target.value)} placeholder="∞" />
+              </div>
+              <div>
+                <label className="text-xs text-text-muted">Max tokens / day</label>
+                <Input type="number" min="0" value={editMaxTokensDaily} onChange={(e) => setEditMaxTokensDaily(e.target.value)} placeholder="∞" />
+              </div>
+              <div>
+                <label className="text-xs text-text-muted">Requests / minute</label>
+                <Input type="number" min="0" value={editRpm} onChange={(e) => setEditRpm(e.target.value)} placeholder="∞" />
+              </div>
+              <div>
+                <label className="text-xs text-text-muted">Requests / hour</label>
+                <Input type="number" min="0" value={editRph} onChange={(e) => setEditRph(e.target.value)} placeholder="∞" />
+              </div>
+              <div>
+                <label className="text-xs text-text-muted">Requests / day</label>
+                <Input type="number" min="0" value={editRpd} onChange={(e) => setEditRpd(e.target.value)} placeholder="∞" />
+              </div>
+              <div>
+                <label className="text-xs text-text-muted">Tokens / 5 hours</label>
+                <Input type="number" min="0" value={editTokens5h} onChange={(e) => setEditTokens5h(e.target.value)} placeholder="∞" />
+              </div>
+              <div>
+                <label className="text-xs text-text-muted">Tokens / week</label>
+                <Input type="number" min="0" value={editTokensWeekly} onChange={(e) => setEditTokensWeekly(e.target.value)} placeholder="∞" />
+              </div>
+              <div>
+                <label className="text-xs text-text-muted">Tokens / month</label>
+                <Input type="number" min="0" value={editTokensMonthly} onChange={(e) => setEditTokensMonthly(e.target.value)} placeholder="∞" />
+              </div>
+            </div>
+          </div>
+
           {/* ACL info */}
           <div className="text-xs text-text-muted bg-surface-2 rounded-lg p-3 border border-border-subtle">
             <p className="font-medium mb-1">How it works:</p>
@@ -1792,6 +2048,7 @@ export default function APIPageClient({ machineId }) {
               <li><strong>All allowed</strong> = unrestricted (default). No ACL filtering.</li>
               <li><strong>Unchecked + empty</strong> = deny everything of that type.</li>
               <li><strong>Checked items</strong> = only those items are accessible.</li>
+              <li><strong>Usage limits</strong> = leave blank to disable. Applies to requests made with this key.</li>
             </ul>
           </div>
 
@@ -1801,7 +2058,7 @@ export default function APIPageClient({ machineId }) {
               Cancel
             </Button>
             <Button onClick={handleSaveEditKey} fullWidth disabled={editSaving}>
-              {editSaving ? "Saving..." : "Save ACL"}
+              {editSaving ? "Saving..." : "Save"}
             </Button>
           </div>
         </div>
