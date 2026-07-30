@@ -26,7 +26,11 @@ export default function MasukClient({ initialAuth }) {
   const hasPassword = initialAuth?.hasPassword ?? null;
   const authMode = initialAuth?.authMode || "password";
   const oidcConfigured = initialAuth?.oidcConfigured || false;
-  const oidcLoginLabel = initialAuth?.oidcLoginLabel || translate("Sign in with OIDC");
+  const oidcLoginLabel = initialAuth?.oidcLoginLabel || "Masuk dengan OIDC";
+  const isLocal = initialAuth?.isLocal === true;
+  const passkeysEnabled = initialAuth?.passkeysEnabled === true;
+  const [passkeyLoading, setPasskeyLoading] = useState(false);
+  const [passkeyError, setPasskeyError] = useState("");
   const router = useRouter();
 
   useEffect(() => {
@@ -72,7 +76,47 @@ export default function MasukClient({ initialAuth }) {
     }
   };
 
+  const handlePasskeyLogin = async () => {
+    setPasskeyLoading(true);
+    setPasskeyError("");
+    try {
+      const startRes = await fetch("/api/auth/passkey/login/start", { method: "POST" });
+      if (!startRes.ok) {
+        const data = await startRes.json();
+        setPasskeyError(data.error || "Login passkey gagal");
+        return;
+      }
+      const options = await startRes.json();
+
+      const { startAuthentication } = await import("@/lib/auth/passkeyBrowser.js");
+      const assertion = await startAuthentication({ optionsJSON: options });
+
+      const finishRes = await fetch("/api/auth/passkey/login/finish", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ assertion }),
+      });
+
+      if (finishRes.ok) {
+        router.push("/dashboard");
+        router.refresh();
+      } else {
+        const data = await finishRes.json();
+        setPasskeyError(data.error || "Verifikasi passkey gagal");
+      }
+    } catch (err) {
+      if (err.name === "NotAllowedError") {
+        setPasskeyError("Autentikasi passkey dibatalkan atau kedaluwarsa.");
+      } else {
+        setPasskeyError(err.message || "Terjadi kesalahan saat login passkey.");
+      }
+    } finally {
+      setPasskeyLoading(false);
+    }
+  };
+
   const oidcAvailable = oidcConfigured && ["oidc", "both"].includes(authMode);
+  const passkeyAvailable = passkeysEnabled;
   const passwordAvailable = authMode !== "oidc" || !oidcConfigured;
 
   if (hasPassword === null) {
@@ -102,8 +146,10 @@ export default function MasukClient({ initialAuth }) {
           <h1 className="text-3xl font-bold text-primary mb-2">VansAI</h1>
           <p className="text-text-muted text-sm">
             {authMode === "oidc" && oidcConfigured
-              ? "Sign in with OIDC to access the dashboard"
-              : "Enter password to access the dashboard"}
+              ? "Masuk dengan OIDC provider untuk mengakses dashboard"
+              : passkeyAvailable && !passwordAvailable
+                ? "Masuk dengan passkey untuk mengakses dashboard"
+                : "Masukkan password untuk mengakses dashboard"}
           </p>
         </div>
 
@@ -115,7 +161,26 @@ export default function MasukClient({ initialAuth }) {
               </Button>
             )}
 
-            {oidcAvailable && passwordAvailable && <div className="h-px bg-border/60" />}
+            {oidcAvailable && (passwordAvailable || passkeyAvailable) && <div className="h-px bg-border/60" />}
+
+            {passkeyAvailable && (
+              <Button
+                type="button"
+                variant="primary"
+                className="w-full"
+                onClick={handlePasskeyLogin}
+                loading={passkeyLoading}
+              >
+                <span className="flex items-center justify-center gap-2">
+                  <span className="material-symbols-outlined text-[20px]">key</span>
+                  Masuk dengan Passkey
+                </span>
+              </Button>
+            )}
+
+            {passkeyAvailable && passwordAvailable && <div className="h-px bg-border/60" />}
+
+            {passkeyError && <p className="text-xs text-red-500 text-center">{passkeyError}</p>}
 
             {passwordAvailable ? (
               <form onSubmit={handleLogin} className="flex flex-col gap-4">
@@ -140,7 +205,7 @@ export default function MasukClient({ initialAuth }) {
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
                     required
-                    autoFocus={!oidcAvailable}
+                    autoFocus={!oidcAvailable && !passkeyAvailable}
                   />
                   {error && <p className="text-xs text-red-500">{error}</p>}
                   {retryAfter > 0 && (
