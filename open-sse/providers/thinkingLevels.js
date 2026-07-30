@@ -44,5 +44,9 @@ export function getThinkingLevels(provider, model) {
   const hit = PATTERN_THINKING.find((p) => matchPattern(p.pattern, model));
   let levels = hit?.levels || FORMAT_LEVELS[caps.thinkingFormat] || L.base;
   if (caps.thinkingCanDisable === false) levels = levels.filter((l) => l !== "none");
+  // Gemini CLI / Vertex: drop "minimal" — too weak for useful CoT and confuses the picker.
+  if (provider === "gemini-cli" || provider === "vertex") {
+    levels = levels.filter((l) => l !== "minimal");
+  }
   return levels;
 }

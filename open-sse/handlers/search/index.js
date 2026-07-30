@@ -10,6 +10,7 @@
 import { buildSearchRequest } from "./callers.js";
 import { normalizeSearchResponse } from "./normalizers.js";
 import { handleChatSearch } from "./chatSearch.js";
+import { searchDuckDuckGo } from "./adapters/duckduckgo.js";
 
 const GLOBAL_TIMEOUT_MS = 15000;
 const NON_RETRIABLE = new Set([400, 401, 403, 404]);
@@ -83,6 +84,58 @@ async function tryDedicatedProvider({ provider, providerConfig, body, credential
     providerOptions: body.provider_options,
     providerSpecificData: credentials?.providerSpecificData
   };
+
+  // In-process free search (no HTTP upstream). Used by DuckDuckGo.
+  if (providerConfig.executor === "duckduckgo") {
+    const remaining = GLOBAL_TIMEOUT_MS - (Date.now() - globalStartTime);
+    const timeout = Math.min(providerConfig.timeoutMs || 12000, Math.max(remaining, 1000));
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeout);
+    log?.info?.("SEARCH", `duckduckgo | "${params.query.slice(0, 80)}" | type=${params.searchType}`);
+    try {
+      const { results, totalResults } = await searchDuckDuckGo({
+        query: params.query,
+        maxResults: params.maxResults,
+        searchType: params.searchType,
+        signal: controller.signal,
+      });
+      clearTimeout(timer);
+      const duration = Date.now() - startTime;
+      const now = new Date().toISOString();
+      const normalized = results.map((item, idx) => ({
+        title: item.title || "",
+        url: item.url || "",
+        display_url: item.url ? String(item.url).replace(/^https?:\/\/(www\.)?/, "").split("?")[0] : undefined,
+        snippet: item.snippet || "",
+        position: idx + 1,
+        score: null,
+        published_at: item.published_at || null,
+        favicon_url: null,
+        content: null,
+        metadata: { author: null, language: null, source_type: null, image_url: null },
+        citation: { provider: "duckduckgo", retrieved_at: now, rank: idx + 1 },
+        provider_raw: null,
+      }));
+      return {
+        success: true,
+        data: {
+          provider: "duckduckgo",
+          query: params.query,
+          results: normalized.slice(0, params.maxResults),
+          answer: null,
+          usage: { queries_used: 1, search_cost_usd: 0 },
+          metrics: { response_time_ms: duration, upstream_latency_ms: duration, total_results_available: totalResults },
+          errors: [],
+        },
+      };
+    } catch (err) {
+      clearTimeout(timer);
+      const isTimeout = err?.name === "AbortError";
+      const status = isTimeout ? 504 : 502;
+      log?.error?.("SEARCH", `duckduckgo ${isTimeout ? "timeout" : "error"}: ${err?.message || err}`);
+      return { success: false, status, error: `duckduckgo ${isTimeout ? "timeout" : "error"}: ${err?.message || err}` };
+    }
+  }
 
   let url, init;
   try {

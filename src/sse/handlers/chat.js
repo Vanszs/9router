@@ -11,6 +11,7 @@ import {
   isKindAllowed,
   isTrustedInternalRequest,
 } from "../services/auth.js";
+import { checkApiKeyLimits, recordApiKeyUsage } from "@/lib/db/repos/apiKeyUsageRepo.js";
 import {
   isKimchiQuotaExhausted,
   buildKimchiQuotaExhaustedUpdate,
@@ -120,6 +121,27 @@ export async function handleChat(request, clientRawRequest = null) {
     if (!apiKeyInfo) {
       log.warn("AUTH", "Invalid API key (requireApiKey=true)");
       return errorResponse(HTTP_STATUS.UNAUTHORIZED, "Invalid API key");
+    }
+  }
+
+  // Enforce per-key usage limits (applies even when requireApiKey is false but a key was supplied)
+  if (apiKeyInfo) {
+    const estimatedTokens = body.max_tokens || 0;
+    const limitCheck = checkApiKeyLimits(apiKeyInfo, estimatedTokens);
+    if (!limitCheck.allowed) {
+      log.warn("AUTH", `API key limit exceeded: ${limitCheck.reason}`);
+      const retryAfter = limitCheck.retryAfterMs ? Math.ceil(limitCheck.retryAfterMs / 1000).toString() : undefined;
+      const body = JSON.stringify({
+        error: { message: limitCheck.reason, type: "rate_limit_error", code: "rate_limit_exceeded" },
+      });
+      return new Response(body, {
+        status: HTTP_STATUS.RATE_LIMITED,
+        headers: {
+          "Content-Type": "application/json",
+          "Access-Control-Allow-Origin": "*",
+          ...(retryAfter ? { "Retry-After": retryAfter } : {}),
+        },
+      });
     }
   }
 
@@ -437,10 +459,29 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
     // Use shared chatCore — wrap in try/finally so semaphoreRelease() always runs
     let result;
     const providerThinking = (chatSettings.providerThinking || {})[provider] || null;
+    const isGeminiLike = provider === "gemini-cli" || provider === "vertex";
+    const hasNoTools = !Array.isArray(body?.tools) || body.tools.length === 0;
+    const isJsonMode =
+      body?.response_format?.type === "json_schema" ||
+      body?.response_format?.type === "json_object";
+    const chatBody = { ...body, model: `${provider}/${model}` };
+    // Web search: Google grounding for gemini-cli/vertex only (auto-enable when toggled on,
+    // no client tools, no JSON schema output — provider rejects tools + googleSearch combo).
+    if (isGeminiLike && chatSettings.webSearchEnabled && hasNoTools && !isJsonMode) {
+      chatBody.web_search = true;
+    }
+    // Visible reasoning dashboard toggle → always send an explicit include_reasoning
+    // value (true/false), never omit. Omission left applyThinking free to set
+    // includeThoughts:true by default and leak thoughts when the toggle is OFF.
+    // Client-explicit include_reasoning always wins.
+    if (isGeminiLike && body?.include_reasoning == null) {
+      chatBody.include_reasoning = !!chatSettings.visibleReasoningEnabled;
+    }
     try {
       result = await handleChatCore({
-      body: { ...body, model: `${provider}/${model}` },
+      body: chatBody,
       modelInfo: { provider, model, accountCount: providerAccountCount },
+      clientModelId: modelStr,
       credentials: refreshedCredentials,
       log,
       clientRawRequest,
@@ -457,6 +498,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
       cavemanLevel: chatSettings.cavemanLevel || "full",
       ponytailEnabled: !!chatSettings.ponytailEnabled,
       ponytailLevel: chatSettings.ponytailLevel || "full",
+      systemPrompt: chatSettings.systemPrompt || null,
       loopGuardEnabled: chatSettings.loopGuardEnabled !== false && chatSettings.loopGuardEnabled !== 0,
       providerThinking,
       clientSignal,
@@ -472,7 +514,8 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
       onRequestSuccess: async () => {
         await clearAccountError(credentials.connectionId, credentials, model);
         clearProviderFailure(provider, proxyHash);
-      }
+      },
+      apiKeyInfo
     });
     } finally {
       // Always release the semaphore slot, even if handleChatCore throws

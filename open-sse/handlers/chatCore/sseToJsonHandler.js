@@ -76,10 +76,42 @@ export function parseSSEToOpenAIResponse(rawSSE, fallbackModel, validToolNames =
   for (const chunk of chunks) {
     const choice = chunk?.choices?.[0];
     const delta = choice?.delta || {};
+
+    // OpenAI format: content in delta + usage at chunk root
     if (typeof delta.content === "string" && delta.content.length > 0) contentParts.push(delta.content);
     if (typeof delta.reasoning_content === "string" && delta.reasoning_content.length > 0) reasoningParts.push(delta.reasoning_content);
     if (choice?.finish_reason) finishReason = choice.finish_reason;
     if (chunk?.usage && typeof chunk.usage === "object") usage = chunk.usage;
+
+    // Gemini / Antigravity format: content in response.candidates[*].content.parts
+    // and usageMetadata inside response envelope
+    //    data: {"response":{"candidates":[{...}],"usageMetadata":{"promptTokenCount":...,...}}}
+    if (!choice && chunk.response) {
+      const resp = chunk.response;
+      const candidate = resp.candidates?.[0];
+      if (candidate) {
+        const parts = candidate.content?.parts || [];
+        for (const part of parts) {
+          if (part.text !== undefined && part.text) contentParts.push(part.text);
+          if (part.thought && part.text) reasoningParts.push(part.text);
+        }
+        if (candidate.finishReason) finishReason = candidate.finishReason.toLowerCase();
+      }
+      // Extract usage from Gemini AG envelope
+      const usageMeta = resp.usageMetadata || chunk.usageMetadata;
+      if (usageMeta && !usage) {
+        const prompt = usageMeta.promptTokenCount || 0;
+        const completion = usageMeta.candidatesTokenCount || 0;
+        usage = {
+          prompt_tokens: prompt,
+          completion_tokens: completion,
+          total_tokens: usageMeta.totalTokenCount || (prompt + completion),
+          completion_tokens_details: {
+            reasoning_tokens: usageMeta.thoughtsTokenCount || 0
+          }
+        };
+      }
+    }
 
     // Accumulate tool_calls from streaming deltas
     if (Array.isArray(delta.tool_calls)) {
@@ -125,7 +157,7 @@ export function parseSSEToOpenAIResponse(rawSSE, fallbackModel, validToolNames =
  * Handle case: provider forced streaming but client wants JSON.
  * Supports both Codex/Responses API SSE and standard Chat Completions SSE.
  */
-export async function handleForcedSSEToJson({ providerResponse, sourceFormat, provider, model, body, stream, translatedBody, finalBody, requestStartTime, connectionId, apiKey, apiKeyName, clientRawRequest, onRequestSuccess, trackDone, appendLog, comboName, toolNameMap }) {
+export async function handleForcedSSEToJson({ providerResponse, sourceFormat, provider, model, body, stream, translatedBody, finalBody, requestStartTime, connectionId, apiKey, apiKeyInfo, apiKeyName, clientRawRequest, onRequestSuccess, trackDone, appendLog, comboName, toolNameMap }) {
   const contentType = providerResponse.headers.get("content-type") || "";
   const isSSE = contentType.includes("text/event-stream") || (contentType === "" && isResponsesProvider(provider));
   if (!isSSE) return null; // not handled here
@@ -147,7 +179,7 @@ export async function handleForcedSSEToJson({ providerResponse, sourceFormat, pr
 
       const usage = jsonResponse.usage || {};
       appendLog({ tokens: usage, status: "200 OK" });
-      saveUsageStats({ provider, model, tokens: usage, connectionId, apiKey, endpoint: clientRawRequest?.endpoint, comboName });
+      saveUsageStats({ provider, model, tokens: usage, connectionId, apiKey, apiKeyInfo, endpoint: clientRawRequest?.endpoint, comboName });
 
       const { msgItem, textContent } = pickAssistantMessageForChatCompletion(jsonResponse.output);
       const totalLatency = Date.now() - requestStartTime;
@@ -244,7 +276,7 @@ export async function handleForcedSSEToJson({ providerResponse, sourceFormat, pr
 
     const usage = parsed.usage || {};
     appendLog({ tokens: usage, status: "200 OK" });
-    saveUsageStats({ provider, model, tokens: usage, connectionId, apiKey, endpoint: clientRawRequest?.endpoint });
+    saveUsageStats({ provider, model, tokens: usage, connectionId, apiKey, apiKeyInfo, endpoint: clientRawRequest?.endpoint });
 
     const totalLatency = Date.now() - requestStartTime;
     saveRequestDetail(buildRequestDetail({
@@ -259,17 +291,8 @@ export async function handleForcedSSEToJson({ providerResponse, sourceFormat, pr
       status: "success"
     }, { endpoint: clientRawRequest?.endpoint || null })).catch(() => {});
 
-    // Strip reasoning_content only when content is non-empty.
-    // When content is empty (e.g. thinking models that used all tokens for reasoning),
-    // reasoning_content is the only useful output and must be preserved.
-    // Previously this was unconditional, which broke Qwen3.5, Claude extended thinking, etc.
-    if (parsed?.choices) {
-      for (const choice of parsed.choices) {
-        if (choice?.message?.reasoning_content && choice.message.content) {
-          delete choice.message.reasoning_content;
-        }
-      }
-    }
+    // Preserve reasoning_content alongside content. Stripping it when content was
+    // present hid thinking output for NIM and other OpenAI-compatible reasoners.
 
     // Reverse conversion: OpenAI → Claude when client sent Claude-format request
     // (relayn provider path: request was translated CLAUDE→OPENAI upstream,

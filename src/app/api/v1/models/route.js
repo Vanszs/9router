@@ -3,6 +3,7 @@ import { getSettings } from "@/lib/localDb";
 import { stripComboPrefix } from "open-sse/services/combo.js";
 import { buildModelsList } from "@/sse/services/allowedModels.js";
 import { capabilitiesFromServiceKind } from "open-sse/providers/capabilities.js";
+import { checkApiKeyLimits, recordApiKeyUsage } from "@/lib/db/repos/apiKeyUsageRepo.js";
 
 const parseOpenAIStyleModels = (data) => {
   if (Array.isArray(data)) return data;
@@ -54,6 +55,15 @@ export async function GET(request) {
           { status: 401, headers: { "Access-Control-Allow-Origin": "*" } }
         );
       }
+      const limitCheck = checkApiKeyLimits(apiKeyInfo, 0);
+      if (!limitCheck.allowed) {
+        const retryAfter = limitCheck.retryAfterMs ? Math.ceil(limitCheck.retryAfterMs / 1000).toString() : undefined;
+        return Response.json(
+          { error: { message: limitCheck.reason, type: "rate_limit_error", code: "rate_limit_exceeded" } },
+          { status: 429, headers: { "Access-Control-Allow-Origin": "*", ...(retryAfter ? { "Retry-After": retryAfter } : {}) } }
+        );
+      }
+      recordApiKeyUsage(apiKeyInfo, 0);
     }
 
     let data = await buildModelsList([LLM_KIND], { skipDynamicFetch });
@@ -61,6 +71,10 @@ export async function GET(request) {
     if (apiKeyInfo) {
       const allowedOwners = new Map();
       for (const model of data) {
+        // Bare user-defined aliases (owned_by === "alias") are short-circuitable
+        // pointers to a real provider/model. ACL on the underlying model is
+        // enforced at chat time via isModelAllowed, so let them through here.
+        if (model.owned_by === "alias") continue;
         const isCombo = model.owned_by === "combo";
         const key = isCombo
           ? `combo:${stripComboPrefix(model.id)}`
@@ -73,6 +87,7 @@ export async function GET(request) {
         }
       }
       data = data.filter((model) => {
+        if (model.owned_by === "alias") return true;
         const isCombo = model.owned_by === "combo";
         const key = isCombo
           ? `combo:${stripComboPrefix(model.id)}`

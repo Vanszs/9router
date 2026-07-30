@@ -45,10 +45,11 @@ export default {
   },
   models: [
     { id: "claude-opus-4-6", name: "Claude 4.6 Opus" },
-    { id: "claude-opus-4-7", name: "Claude 4.7 Opus" },
     { id: "claude-opus-4-8", name: "Claude 4.8 Opus" },
     { id: "glm-5.2", name: "GLM 5.2" },
     { id: "gpt-5.5", name: "GPT 5.5" },
+    { id: "gpt-5.6-sol", name: "GPT 5.6 Sol" },
+    { id: "kimi-k3", name: "Kimi K3" },
   ],
   passthroughModels: true,
 };

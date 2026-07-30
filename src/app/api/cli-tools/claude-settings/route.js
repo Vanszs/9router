@@ -112,7 +112,7 @@ export async function GET() {
       settingsPath: getClaudeSettingsPath(),
     });
   } catch (error) {
-    console.log("Error checking claude settings:", error);
+    console.error("Error checking claude settings:", error);
     return NextResponse.json(
       { error: "Failed to check claude settings" },
       { status: 500 }
@@ -179,7 +179,7 @@ export async function POST(request) {
       message: "Settings updated successfully",
     });
   } catch (error) {
-    console.log("Error updating claude settings:", error);
+    console.error("Error updating claude settings:", error);
     return NextResponse.json(
       { error: "Failed to update claude settings" },
       { status: 500 }
@@ -240,7 +240,7 @@ export async function DELETE() {
       message: "Settings reset successfully",
     });
   } catch (error) {
-    console.log("Error resetting claude settings:", error);
+    console.error("Error resetting claude settings:", error);
     return NextResponse.json(
       { error: "Failed to reset claude settings" },
       { status: 500 }

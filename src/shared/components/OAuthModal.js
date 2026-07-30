@@ -237,6 +237,10 @@ export default function OAuthModal({ isOpen, provider, providerInfo, onSuccess, 
         // Z.ai client (per ZCode source) only accepts custom URL scheme `zcode://zai-auth/callback`.
         // Browser shows ERR_UNKNOWN_URL_SCHEME; user copies URL from address bar → manual paste.
         redirectUri = "zcode://zai-auth/callback";
+      } else if (provider === "claude") {
+        // Anthropic's public Claude Code client_id only whitelists this
+        // redirect (not our own domain) — code must be pasted back manually.
+        redirectUri = "https://platform.claude.com/oauth/code/callback";
       } else {
         redirectUri = `https://api.bevansatria.my.id/callback`;
       }
@@ -319,8 +323,11 @@ export default function OAuthModal({ isOpen, provider, providerInfo, onSuccess, 
         if (!popupRef.current) {
           setStep("input");
         }
-      } else if (!isLocalhost || provider === "codex" || provider === "xai" || provider === "zcode") {
-        // Non-localhost or proxy failed or zcode (custom-scheme callback): manual input mode
+      } else if (!isLocalhost || provider === "codex" || provider === "xai" || provider === "zcode" || provider === "claude") {
+        // Non-localhost, proxy failed, zcode (custom-scheme callback), or
+        // claude (redirect lands on platform.claude.com, not our own
+        // /callback route, so it can never postMessage/BroadcastChannel back):
+        // manual input mode.
         setStep("input");
         window.open(data.authUrl, "_blank");
       } else {
@@ -519,6 +526,15 @@ export default function OAuthModal({ isOpen, provider, providerInfo, onSuccess, 
         return;
       }
 
+      // Claude: Anthropic's platform.claude.com callback page shows the code
+      // as a bare `code#state` (or just `code`) string, not a full URL. The
+      // claude exchangeToken splits on `#` itself, so pass it through as-is.
+      if (provider === "claude" && input && !input.includes("://")) {
+        const [rawCode, rawState] = input.split("#");
+        await exchangeTokens(rawCode, rawState || authData?.state);
+        return;
+      }
+
       // URL parsing works for both http(s):// and custom schemes like zcode://
       const url = new URL(input);
       const code = url.searchParams.get("code") || url.searchParams.get("authCode");
@@ -562,7 +578,9 @@ export default function OAuthModal({ isOpen, provider, providerInfo, onSuccess, 
   const modalTitle = isXaiProvider ? "Connect Grok Build OAuth" : `Connect ${providerInfo.name}`;
   const manualPlaceholder = isXaiProvider
     ? "http://127.0.0.1:56121/callback?code=... or copied code"
-    : placeholderUrl;
+    : provider === "claude"
+      ? "https://platform.claude.com/oauth/code/callback?code=...&state=..."
+      : placeholderUrl;
 
   return (
     <Modal isOpen={isOpen} title={modalTitle} onClose={handleClose} size="lg">

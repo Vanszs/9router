@@ -5,6 +5,7 @@ import {
   getProjectIdForConnection,
   invalidateProjectId,
   removeConnection,
+  seedProjectIdCache,
 } from "open-sse/services/projectId.js";
 import {
   TOKEN_EXPIRY_BUFFER_MS as BUFFER_MS,
@@ -128,6 +129,18 @@ function needsProjectId(provider) {
 function _refreshProjectId(provider, creds, accessToken) {
   if (!needsProjectId(provider) || !creds || !creds.connectionId || !accessToken) return;
   if (creds.isProjectIdManual) return; // Skip if project ID is manually configured
+
+  // projectId is bound to the Google account, not the OAuth access token — so
+  // on a routine token refresh for the SAME connection we already have a
+  // valid value in the DB.  Re-onboarding every hour (token TTL) wastes Google
+  // API quota and risks anti-abuse flagging. Only fetch when nothing valid is
+  // currently available in the DB.
+  if (creds.projectId) {
+    // Cache the persisted value so getProjectIdForConnection returns it
+    // immediately without re-hitting Google.
+    try { seedProjectIdCache(creds.connectionId, creds.projectId); } catch (_) { /* noop */ }
+    return;
+  }
 
   const connectionId = creds.connectionId;
   // Evict the stale cached entry so getProjectIdForConnection does a real fetch

@@ -1,0 +1,30 @@
+export default {
+  id: "duckduckgo",
+  alias: "ddg",
+  display: {
+    name: "DuckDuckGo",
+    icon: "travel_explore",
+    color: "#DE5833",
+    textIcon: "DDG",
+    website: "https://duckduckgo.com",
+  },
+  category: "freeTier",
+  authType: "none",
+  serviceKinds: ["webSearch"],
+  noAuth: true,
+  searchConfig: {
+    // In-process adapter (duck-duck-scrape), not an HTTP base URL.
+    baseUrl: "internal:duckduckgo",
+    method: "INTERNAL",
+    authType: "none",
+    authHeader: "none",
+    costPerQuery: 0,
+    freeMonthlyQuota: 999999,
+    searchTypes: ["web", "news"],
+    defaultMaxResults: 5,
+    maxMaxResults: 20,
+    timeoutMs: 12000,
+    cacheTTLMs: 180000,
+    executor: "duckduckgo",
+  },
+};

@@ -10,15 +10,25 @@ import { DATA_DIR } from "@/lib/dataDir.js";
 const execAsync = promisify(exec);
 
 const BIN_DIR = path.join(DATA_DIR, "bin");
+const TAILSCALE_BIN_DIR = path.join(BIN_DIR, "tailscale");
+const BUNDLED_TAILSCALE_BIN_DIR = "/usr/local/bin";
 const IS_MAC = os.platform() === "darwin";
 const IS_LINUX = os.platform() === "linux";
 const IS_WINDOWS = os.platform() === "win32";
-const TAILSCALE_BIN = path.join(BIN_DIR, IS_WINDOWS ? "tailscale.exe" : "tailscale");
+const TAILSCALE_BIN = path.join(TAILSCALE_BIN_DIR, IS_WINDOWS ? "tailscale.exe" : "tailscale");
+const TAILSCALED_BIN = path.join(TAILSCALE_BIN_DIR, IS_WINDOWS ? "tailscaled.exe" : "tailscaled");
+const BUNDLED_TAILSCALE_BIN = path.join(BUNDLED_TAILSCALE_BIN_DIR, IS_WINDOWS ? "tailscale.exe" : "tailscale");
+const BUNDLED_TAILSCALED_BIN = path.join(BUNDLED_TAILSCALE_BIN_DIR, IS_WINDOWS ? "tailscaled.exe" : "tailscaled");
 
 // Custom socket for userspace-networking mode (no root required)
 const TAILSCALE_DIR = path.join(DATA_DIR, "tailscale");
 export const TAILSCALE_SOCKET = path.join(TAILSCALE_DIR, "tailscaled.sock");
-const SOCKET_FLAG = IS_WINDOWS ? [] : ["--socket", TAILSCALE_SOCKET];
+
+// When TAILSCALE_USE_HOST_SOCKET=true, reuse the host's tailscaled via a mounted socket.
+const USE_HOST_SOCKET = process.env.TAILSCALE_USE_HOST_SOCKET === "true";
+const HOST_TAILSCALE_SOCKET = process.env.TAILSCALE_HOST_SOCKET || "/var/run/tailscale/tailscaled.sock";
+export const ACTIVE_TAILSCALE_SOCKET = USE_HOST_SOCKET ? HOST_TAILSCALE_SOCKET : TAILSCALE_SOCKET;
+const SOCKET_FLAG = IS_WINDOWS ? [] : ["--socket", ACTIVE_TAILSCALE_SOCKET];
 
 // System daemon socket (sudo install: apt/snap/systemd) — read-only status detection
 const SYSTEM_TAILSCALE_SOCKET = IS_WINDOWS ? null : "/var/run/tailscale/tailscaled.sock";
@@ -47,6 +57,9 @@ const funnelUrlCache = { value: null, port: null, fetchedAt: 0, refreshing: fals
 
 function fallbackBin() {
   if (fs.existsSync(TAILSCALE_BIN)) return TAILSCALE_BIN;
+  if (fs.existsSync(BUNDLED_TAILSCALE_BIN)) return BUNDLED_TAILSCALE_BIN;
+  if (fs.existsSync(TAILSCALED_BIN)) return TAILSCALED_BIN;
+  if (fs.existsSync(BUNDLED_TAILSCALED_BIN)) return BUNDLED_TAILSCALED_BIN;
   if (IS_WINDOWS && fs.existsSync(WINDOWS_TAILSCALE_BIN)) return WINDOWS_TAILSCALE_BIN;
   if (!IS_WINDOWS) return UNIX_TAILSCALE_CANDIDATES.find((p) => fs.existsSync(p)) || null;
   return null;
@@ -74,6 +87,9 @@ export function getTailscaleBin() {
   // First call: synchronously probe common install paths (no exec, no event-loop block)
   if (binCache.value === undefined) {
     if (fs.existsSync(TAILSCALE_BIN)) binCache.value = TAILSCALE_BIN;
+    else if (fs.existsSync(BUNDLED_TAILSCALE_BIN)) binCache.value = BUNDLED_TAILSCALE_BIN;
+    else if (fs.existsSync(TAILSCALED_BIN)) binCache.value = TAILSCALED_BIN;
+    else if (fs.existsSync(BUNDLED_TAILSCALED_BIN)) binCache.value = BUNDLED_TAILSCALED_BIN;
     else if (IS_WINDOWS && fs.existsSync(WINDOWS_TAILSCALE_BIN)) binCache.value = WINDOWS_TAILSCALE_BIN;
     else if (!IS_WINDOWS) {
       const found = UNIX_TAILSCALE_CANDIDATES.find((p) => fs.existsSync(p));
@@ -287,7 +303,7 @@ export async function installTailscale(sudoPassword, hostname, onProgress) {
   return startLogin(hostname);
 }
 
-const EXTENDED_PATH = `/usr/local/bin:/opt/homebrew/bin:/usr/sbin:/usr/bin:/bin:/snap/bin:${process.env.PATH || ""}`;
+const EXTENDED_PATH = `${BUNDLED_TAILSCALE_BIN_DIR}:${TAILSCALE_BIN_DIR}:/usr/local/bin:/opt/homebrew/bin:/usr/sbin:/usr/bin:/bin:/snap/bin:${process.env.PATH || ""}`;
 
 function hasBrew() {
   try { execSync("which brew", { stdio: "ignore", windowsHide: true, env: { ...process.env, PATH: EXTENDED_PATH } }); return true; } catch { return false; }
@@ -521,7 +537,7 @@ async function ensureUserOwnedDir(dir) {
 /** Check if running daemon uses TUN mode (Funnel TLS requires TUN). */
 function isDaemonTunMode() {
   try {
-    const ps = execSync(`pgrep -af "tailscaled.*${TAILSCALE_SOCKET}"`, { encoding: "utf8", timeout: 2000 }).trim();
+    const ps = execSync(`pgrep -af "tailscaled.*${ACTIVE_TAILSCALE_SOCKET}"`, { encoding: "utf8", timeout: 2000 }).trim();
     if (!ps) return null;
     return !ps.includes("--tun=userspace-networking");
   } catch { return null; }
@@ -569,6 +585,12 @@ export async function startDaemonWithPassword(sudoPassword) {
     return;
   }
 
+  // When using host socket, never spawn our own daemon.
+  if (USE_HOST_SOCKET) {
+    console.log("[Tailscale] TAILSCALE_USE_HOST_SOCKET enabled — skipping local daemon spawn");
+    return;
+  }
+
   const currentMode = isDaemonTunMode(); // true=TUN, false=userspace, null=not running
   // No password but a healthy TUN daemon already runs → keep TUN, never downgrade-kill it.
   const wantTun = sudoPassword ? true : currentMode === true;
@@ -586,20 +608,24 @@ export async function startDaemonWithPassword(sudoPassword) {
   }
 
   // Mode mismatch or unresponsive → kill all daemons on our socket
-  try { execSync(`pkill -9 -f "tailscaled.*${TAILSCALE_SOCKET}"`, { stdio: "ignore", timeout: 3000 }); } catch { /* ignore */ }
+  try { execSync(`pkill -9 -f "tailscaled.*${ACTIVE_TAILSCALE_SOCKET}"`, { stdio: "ignore", timeout: 3000 }); } catch { /* ignore */ }
   if (sudoPassword) {
-    try { await execWithPassword(`pkill -9 -f "tailscaled.*${TAILSCALE_SOCKET}"`, sudoPassword); } catch { /* ignore */ }
+    try { await execWithPassword(`pkill -9 -f "tailscaled.*${ACTIVE_TAILSCALE_SOCKET}"`, sudoPassword); } catch { /* ignore */ }
   } else {
-    try { execSync(`sudo -n pkill -9 -f "tailscaled.*${TAILSCALE_SOCKET}"`, { stdio: "ignore", timeout: 3000 }); } catch { /* ignore */ }
+    try { execSync(`sudo -n pkill -9 -f "tailscaled.*${ACTIVE_TAILSCALE_SOCKET}"`, { stdio: "ignore", timeout: 3000 }); } catch { /* ignore */ }
   }
   await new Promise((r) => setTimeout(r, 1500));
 
   // Reclaim folder ownership (previous root daemon may have locked it)
   await ensureUserOwnedDir(TAILSCALE_DIR);
 
-  const tailscaledBin = IS_MAC ? "/usr/local/bin/tailscaled" : "tailscaled";
+  const tailscaledBin = fs.existsSync(TAILSCALED_BIN)
+    ? TAILSCALED_BIN
+    : fs.existsSync(BUNDLED_TAILSCALED_BIN)
+      ? BUNDLED_TAILSCALED_BIN
+      : (IS_MAC ? "/usr/local/bin/tailscaled" : "tailscaled");
   const daemonArgs = [
-    `--socket=${TAILSCALE_SOCKET}`,
+    `--socket=${ACTIVE_TAILSCALE_SOCKET}`,
     `--statedir=${TAILSCALE_DIR}`,
   ];
   if (!wantTun) daemonArgs.push("--tun=userspace-networking");
@@ -635,7 +661,7 @@ function ensureDaemon() {
 }
 
 /** Read AuthURL from `tailscale status --json` (Win exposes it there, not stdout). */
-function getAuthUrlFromStatus() {
+export function getAuthUrlFromStatus() {
   const bin = getTailscaleBin();
   if (!bin) return null;
   try {

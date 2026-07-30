@@ -245,6 +245,9 @@ export class AntigravityExecutor extends BaseExecutor {
               ? cleanJSONSchemaForAntigravity(structuredClone(fn.parameters))
               : { type: "object", properties: { reason: { type: "string", description: "Brief explanation" } }, required: ["reason"] }
           });
+          // Strip parametersJsonSchema — v1internal uses parameters only;
+          // both fields cause 400 "must not be set when parameters is set".
+          delete allDeclarations[allDeclarations.length - 1].parametersJsonSchema;
         }
       }
       tools = allDeclarations.length > 0 ? [{ functionDeclarations: allDeclarations }] : [];

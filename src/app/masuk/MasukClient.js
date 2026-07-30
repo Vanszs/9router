@@ -3,6 +3,7 @@
 import { useState, useEffect, useReducer } from "react";
 import { Card, Button, Input } from "@/shared/components";
 import { useRouter } from "next/navigation";
+import { translate } from "@/i18n/runtime";
 
 function handleOidcLogin() {
   window.location.href = "/api/auth/oidc/start";
@@ -26,6 +27,10 @@ export default function MasukClient({ initialAuth }) {
   const authMode = initialAuth?.authMode || "password";
   const oidcConfigured = initialAuth?.oidcConfigured || false;
   const oidcLoginLabel = initialAuth?.oidcLoginLabel || "Masuk dengan OIDC";
+  const isLocal = initialAuth?.isLocal === true;
+  const passkeysEnabled = initialAuth?.passkeysEnabled === true;
+  const [passkeyLoading, setPasskeyLoading] = useState(false);
+  const [passkeyError, setPasskeyError] = useState("");
   const router = useRouter();
 
   useEffect(() => {
@@ -34,8 +39,16 @@ export default function MasukClient({ initialAuth }) {
     return () => clearInterval(id);
   }, [retryAfter]);
 
+  // Full navigation (not router.push) so auth cookie is applied and RSC
+  // reloads cleanly. Soft client nav after set-cookie often stuck on /masuk
+  // in Turbopack dev when HMR was blocked cross-origin.
+  useEffect(() => {
+    if (initialAuth?.requireLogin === false) {
+      window.location.assign("/dashboard");
+    }
+  }, [initialAuth?.requireLogin]);
+
   if (initialAuth?.requireLogin === false) {
-    router.push("/dashboard");
     return null;
   }
 
@@ -48,21 +61,62 @@ export default function MasukClient({ initialAuth }) {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ password }),
+        credentials: "same-origin",
       });
 
       if (res.ok) {
+        window.location.assign("/dashboard");
+        return;
+      } else {
+        const data = await res.json();
+        dispatch({ type: "ERROR", error: data.error || translate("Invalid password"), resetHint: data.resetHint, retryAfter: data.retryAfter ? Number(data.retryAfter) : 0 });
+      }
+    } catch (err) {
+      dispatch({ type: "ERROR", error: translate("Something went wrong. Please try again.") });
+    }
+  };
+
+  const handlePasskeyLogin = async () => {
+    setPasskeyLoading(true);
+    setPasskeyError("");
+    try {
+      const startRes = await fetch("/api/auth/passkey/login/start", { method: "POST" });
+      if (!startRes.ok) {
+        const data = await startRes.json();
+        setPasskeyError(data.error || "Login passkey gagal");
+        return;
+      }
+      const options = await startRes.json();
+
+      const { startAuthentication } = await import("@/lib/auth/passkeyBrowser.js");
+      const assertion = await startAuthentication({ optionsJSON: options });
+
+      const finishRes = await fetch("/api/auth/passkey/login/finish", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ assertion }),
+      });
+
+      if (finishRes.ok) {
         router.push("/dashboard");
         router.refresh();
       } else {
-        const data = await res.json();
-        dispatch({ type: "ERROR", error: data.error || "Password salah", resetHint: data.resetHint, retryAfter: data.retryAfter ? Number(data.retryAfter) : 0 });
+        const data = await finishRes.json();
+        setPasskeyError(data.error || "Verifikasi passkey gagal");
       }
     } catch (err) {
-      dispatch({ type: "ERROR", error: "Terjadi kesalahan. Silakan coba lagi." });
+      if (err.name === "NotAllowedError") {
+        setPasskeyError("Autentikasi passkey dibatalkan atau kedaluwarsa.");
+      } else {
+        setPasskeyError(err.message || "Terjadi kesalahan saat login passkey.");
+      }
+    } finally {
+      setPasskeyLoading(false);
     }
   };
 
   const oidcAvailable = oidcConfigured && ["oidc", "both"].includes(authMode);
+  const passkeyAvailable = passkeysEnabled;
   const passwordAvailable = authMode !== "oidc" || !oidcConfigured;
 
   if (hasPassword === null) {
@@ -93,7 +147,9 @@ export default function MasukClient({ initialAuth }) {
           <p className="text-text-muted text-sm">
             {authMode === "oidc" && oidcConfigured
               ? "Masuk dengan OIDC provider untuk mengakses dashboard"
-              : "Masukkan password untuk mengakses dashboard"}
+              : passkeyAvailable && !passwordAvailable
+                ? "Masuk dengan passkey untuk mengakses dashboard"
+                : "Masukkan password untuk mengakses dashboard"}
           </p>
         </div>
 
@@ -105,19 +161,38 @@ export default function MasukClient({ initialAuth }) {
               </Button>
             )}
 
-            {oidcAvailable && passwordAvailable && <div className="h-px bg-border/60" />}
+            {oidcAvailable && (passwordAvailable || passkeyAvailable) && <div className="h-px bg-border/60" />}
+
+            {passkeyAvailable && (
+              <Button
+                type="button"
+                variant="primary"
+                className="w-full"
+                onClick={handlePasskeyLogin}
+                loading={passkeyLoading}
+              >
+                <span className="flex items-center justify-center gap-2">
+                  <span className="material-symbols-outlined text-[20px]">key</span>
+                  Masuk dengan Passkey
+                </span>
+              </Button>
+            )}
+
+            {passkeyAvailable && passwordAvailable && <div className="h-px bg-border/60" />}
+
+            {passkeyError && <p className="text-xs text-red-500 text-center">{passkeyError}</p>}
 
             {passwordAvailable ? (
               <form onSubmit={handleLogin} className="flex flex-col gap-4">
                 {((authMode === "oidc" && !oidcConfigured) || (authMode === "both" && !oidcConfigured)) && (
                   <p className="text-xs text-amber-600 dark:text-amber-400 text-center">
-                    OIDC login aktif, tapi issuer/client belum dikonfigurasi. Password login masih tersedia.
+                    OIDC is enabled but issuer/client is not configured. Password login is still available.
                   </p>
                 )}
 
                 {authMode === "both" && oidcConfigured && (
                   <p className="text-xs text-text-muted text-center">
-                    Password dan OIDC login keduanya aktif.
+                    Password and OIDC login are both available.
                   </p>
                 )}
 
@@ -126,21 +201,21 @@ export default function MasukClient({ initialAuth }) {
                   <Input
                     id="masuk-password"
                     type="password"
-                    placeholder="Masukkan password"
+                    placeholder={translate("Enter password")}
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
                     required
-                    autoFocus={!oidcAvailable}
+                    autoFocus={!oidcAvailable && !passkeyAvailable}
                   />
                   {error && <p className="text-xs text-red-500">{error}</p>}
                   {retryAfter > 0 && (
                     <p className="text-xs text-amber-600 dark:text-amber-400">
-                      Terkunci. Coba lagi dalam <span className="font-mono">{retryAfter}s</span>.
+                      Locked. Try again in <span className="font-mono">{retryAfter}s</span>.
                     </p>
                   )}
                   {resetHint && (
                     <p className="text-xs text-text-muted">
-                      Lupa password? Buka <code className="bg-sidebar px-1 rounded">vansrouter</code> CLI di host → <b>Settings</b> → <b>Reset Password to Default</b>.
+                      Forgot password? Open the <code className="bg-sidebar px-1 rounded">vansrouter</code> CLI on the host → <b>Settings</b> → <b>Reset Password to Default</b>.
                     </p>
                   )}
                 </div>
@@ -152,15 +227,15 @@ export default function MasukClient({ initialAuth }) {
                   loading={loading}
                   disabled={retryAfter > 0}
                 >
-                  {retryAfter > 0 ? `Tunggu ${retryAfter}s` : "Masuk"}
+                  {retryAfter > 0 ? `${translate("Wait")} ${retryAfter}s` : translate("Sign in")}
                 </Button>
 
                 <p className="text-xs text-center text-text-muted mt-2">
-                  Password default adalah <code className="bg-sidebar px-1 rounded">123456</code>
+                  Default password is <code className="bg-sidebar px-1 rounded">123456</code>
                 </p>
                 {hasPassword === false && (
                   <p className="text-xs text-center text-text-muted">
-                    Custom password belum diset. Password default di atas akan berfungsi sampai diganti.
+                    No custom password set. The default above works until you change it.
                   </p>
                 )}
               </form>

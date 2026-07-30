@@ -21,6 +21,7 @@ const DEFAULT_SETTINGS = {
   allowRemoteNoApiKey: false,
   tunnelDashboardAccess: true,
   authMode: "password",
+  passkeysEnabled: false,
   oidcIssuerUrl: "",
   oidcClientId: "",
   oidcClientSecret: "",
@@ -44,6 +45,7 @@ const DEFAULT_SETTINGS = {
   cavemanLevel: "full",
   ponytailEnabled: false,
   ponytailLevel: "full",
+  systemPrompt: "",
 };
 
 async function readRaw() {

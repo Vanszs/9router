@@ -97,7 +97,6 @@ gitbooks/*
 gitbook/README.md
 .github/instructions/codacy.instructions.md
 
-<<<<<<< HEAD
 # =============================================================================
 # TypeScript
 # =============================================================================
@@ -113,13 +112,13 @@ next-env.d.ts
 # =============================================================================
 # Tooling-generated artifacts (kimchi / understand-anything)
 # =============================================================================
-# .kimchi/ contains generated audit and lighthouse reports; .understand-anything/
-# contains generated knowledge-graph data. These are produced by the project
-# tooling and regenerated on demand — do not commit fresh generations.
 /.kimchi/
 /.understand-anything/
 
-# Refactor backup reference / graphify output (do not bundle/lint)
+# Refactor backup reference / graphify output
 .graphifyignore
 graphify-out/*
 .next-analyze/*
+*.orig
+*.rej
+.claude/

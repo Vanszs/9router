@@ -302,7 +302,19 @@ async function buildAllModelEntries(kindFilter, combos, customModels, modelAlias
     if (combo.kind === "webSearch" || combo.kind === "webFetch") {
       entry.kind = combo.kind;
     }
+    if (combo.context_length) {
+      entry.context_length = Number(combo.context_length);
+    }
     entries.push(entry);
+
+    const bareEntry = { id: combo.name, object: "model", owned_by: "combo" };
+    if (combo.kind === "webSearch" || combo.kind === "webFetch") {
+      bareEntry.kind = combo.kind;
+    }
+    if (combo.context_length) {
+      bareEntry.context_length = Number(combo.context_length);
+    }
+    entries.push(bareEntry);
   }
 
   if (!dbAvailable) {
@@ -354,6 +366,23 @@ async function buildAllModelEntries(kindFilter, combos, customModels, modelAlias
   for (const res of noAuthResults) {
     if (res.status === "fulfilled" && Array.isArray(res.value)) {
       entries.push(...res.value);
+    }
+  }
+
+  // Bare alias entries: surface user-defined aliases as first-class model ids
+  // (no provider prefix) so /v1/models lists them and isModelAllowed accepts
+  // them. The target model's disabled status is respected — disabled targets
+  // do not get an alias entry. ponytail: no kind filtering — alias.kind is
+  // unknown; /v1/models is untyped and chat resolves via getModelInfo anyway.
+  if (modelAliases && typeof modelAliases === "object") {
+    for (const [aliasName, fullModel] of Object.entries(modelAliases)) {
+      if (typeof aliasName !== "string" || !aliasName.trim()) continue;
+      if (typeof fullModel !== "string" || !fullModel.includes("/")) continue;
+      const slashIdx = fullModel.indexOf("/");
+      const targetAlias = fullModel.slice(0, slashIdx);
+      const targetModelId = fullModel.slice(slashIdx + 1);
+      if (isDisabled && isDisabled(targetAlias, targetModelId)) continue;
+      entries.push({ id: aliasName, object: "model", owned_by: "alias" });
     }
   }
 
@@ -590,6 +619,7 @@ export async function buildModelsList(kindFilter, options = {}) {
     };
     if (entry.kind) model.kind = entry.kind;
     if (entry.capabilities) model.capabilities = entry.capabilities;
+    if (entry.context_length) model.context_length = entry.context_length;
     dedupedModels.push(model);
   }
 
@@ -647,7 +677,16 @@ export function invalidateAllowedModelsCache() {
 }
 
 export async function isModelAllowed(modelStr, apiKeyInfo = null) {
-  if (!apiKeyInfo) return true;
+  // Per-key model ACL (null=all, []=none, [id]=specific). Checked first.
+  if (apiKeyInfo) {
+    const keyModels = apiKeyInfo.allowedModels;
+    if (Array.isArray(keyModels)) {
+      if (keyModels.length === 0) return false;
+      if (!keyModels.includes(modelStr)) return false;
+    }
+  }
+  // Global allowed list always enforced — even when apiKeyInfo is null — so
+  // disabled models and non-existent combos are rejected regardless of auth.
   const allowed = await getAllowedModelIds();
   return allowed.has(modelStr);
 }
