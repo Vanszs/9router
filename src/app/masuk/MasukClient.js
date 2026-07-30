@@ -28,7 +28,6 @@ export default function MasukClient({ initialAuth }) {
   const oidcLoginLabel = initialAuth?.oidcLoginLabel || "Masuk dengan OIDC";
   const isLocal = initialAuth?.isLocal === true;
   const passkeysEnabled = initialAuth?.passkeysEnabled === true;
-  const remoteAuthMode = initialAuth?.remoteAuthMode || "password";
   const [passkeyLoading, setPasskeyLoading] = useState(false);
   const [passkeyError, setPasskeyError] = useState("");
   const router = useRouter();
@@ -107,10 +106,8 @@ export default function MasukClient({ initialAuth }) {
   };
 
   const oidcAvailable = oidcConfigured && ["oidc", "both"].includes(authMode);
-  const passkeyAvailable = passkeysEnabled && (isLocal || ["passkey", "both"].includes(remoteAuthMode));
-  const passwordAvailable = isLocal
-    ? (authMode !== "oidc" || !oidcConfigured)
-    : (remoteAuthMode !== "passkey" && (authMode !== "oidc" || !oidcConfigured));
+  const passkeyAvailable = passkeysEnabled;
+  const passwordAvailable = authMode !== "oidc" || !oidcConfigured;
 
   if (hasPassword === null) {
     return (

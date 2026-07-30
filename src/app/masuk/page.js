@@ -7,7 +7,7 @@ import { isLocalRequest } from "@/dashboardGuard";
 import MasukClient from "./MasukClient";
 
 export default async function MasukPage() {
-  let initialAuth = { hasPassword: true, authMode: "password", oidcConfigured: false, oidcLoginLabel: "Masuk dengan OIDC", requireLogin: true, isLocal: false, passkeysEnabled: false, remoteAuthMode: "password" };
+  let initialAuth = { hasPassword: true, authMode: "password", oidcConfigured: false, oidcLoginLabel: "Masuk dengan OIDC", requireLogin: true, isLocal: false, passkeysEnabled: false };
   try {
     const settings = await getSettings();
     const cookieStore = await cookies();
@@ -28,7 +28,6 @@ export default async function MasukPage() {
       isLoggedIn: !!session,
       isLocal: local,
       passkeysEnabled: !!settings.passkeysEnabled,
-      remoteAuthMode: settings.remoteAuthMode || "password",
     };
   } catch {}
   return <MasukClient initialAuth={initialAuth} />;

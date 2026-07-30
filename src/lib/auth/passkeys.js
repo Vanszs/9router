@@ -174,6 +174,6 @@ export async function removePasskey(id) {
   // Auto-disable passkeys when the last one is removed
   const count = (await getPasskeys()).length;
   if (count === 0) {
-    await updateSettings({ passkeysEnabled: false, remoteAuthMode: "password" });
+    await updateSettings({ passkeysEnabled: false });
   }
 }

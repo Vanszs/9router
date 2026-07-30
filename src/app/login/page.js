@@ -18,7 +18,6 @@ export default function LoginPage() {
   const [newPassword, setNewPassword] = useState("");
   const [isLocal, setIsLocal] = useState(false);
   const [passkeysEnabled, setPasskeysEnabled] = useState(false);
-  const [remoteAuthMode, setRemoteAuthMode] = useState("password");
 
   // Countdown for rate-limit
   useEffect(() => {
@@ -52,7 +51,6 @@ export default function LoginPage() {
           setOidcLoginLabel(data.oidcLoginLabel || "Sign in with OIDC");
           setIsLocal(data.isLocal === true);
           setPasskeysEnabled(data.passkeysEnabled === true);
-          setRemoteAuthMode(data.remoteAuthMode || "password");
         } else {
           // Safe fallback on non-OK response to avoid infinite loading state.
           setHasPassword(true);
@@ -172,11 +170,9 @@ export default function LoginPage() {
   };
 
   const oidcAvailable = oidcConfigured && ["oidc", "both"].includes(authMode);
-  const passkeyAvailable = passkeysEnabled && (isLocal || ["passkey", "both"].includes(remoteAuthMode));
-  // On remote: if remoteAuthMode is "passkey" only, hide password
-  const passwordAvailable = isLocal
-    ? (authMode !== "oidc" || !oidcConfigured)
-    : (remoteAuthMode !== "passkey" && (authMode !== "oidc" || !oidcConfigured));
+  const passkeyAvailable = passkeysEnabled;
+  // Password always available (remoteAuthMode removed — passkey is optional, never exclusive)
+  const passwordAvailable = authMode !== "oidc" || !oidcConfigured;
 
   // Show loading state while checking password
   if (hasPassword === null) {
@@ -200,9 +196,7 @@ export default function LoginPage() {
           <p className="text-text-muted">
             {authMode === "oidc" && oidcConfigured
               ? "Sign in with your OIDC provider to access the dashboard"
-              : passkeyAvailable && !passwordAvailable
-                ? "Sign in with a passkey to access the dashboard"
-                : "Enter your password to access the dashboard"}
+              : "Enter your password or use a passkey to access the dashboard"}
           </p>
         </div>
 

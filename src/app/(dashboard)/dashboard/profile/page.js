@@ -61,7 +61,6 @@ export default function ProfilePage() {
   const [passkeyLoading, setPasskeyLoading] = useState(false);
   const [passkeyStatus, setPasskeyStatus] = useState({ type: "", message: "" });
   const [passkeyNickname, setPasskeyNickname] = useState("");
-  const [remoteAuthModeForm, setRemoteAuthModeForm] = useState("password");
 
   /* eslint-disable react-hooks/set-state-in-effect --
      Locale sync on mount and bootstrap fetch of /api/settings. setState is
@@ -75,7 +74,6 @@ export default function ProfilePage() {
       .then((res) => res.json())
       .then((data) => {
         setSettings(data);
-        setRemoteAuthModeForm(data?.remoteAuthMode || "password");
         setOidcForm({
           authMode: data?.authMode || "password",
           oidcIssuerUrl: data?.oidcIssuerUrl || "",
@@ -313,18 +311,6 @@ export default function ProfilePage() {
     } catch (err) {
       setPasskeyStatus({ type: "error", message: "An error occurred" });
     }
-  };
-
-  const handleRemoteAuthModeChange = async (mode) => {
-    setRemoteAuthModeForm(mode);
-    try {
-      await fetch("/api/settings", {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ remoteAuthMode: mode }),
-      });
-      setSettings((prev) => ({ ...prev, remoteAuthMode: mode }));
-    } catch {}
   };
 
   const updateFallbackStrategy = async (strategy) => {
@@ -867,41 +853,6 @@ export default function ProfilePage() {
           </div>
 
           <div className="flex flex-col gap-4">
-            {/* Remote auth mode selector */}
-            <div className="flex flex-col gap-2">
-              <label className="text-xs sm:text-sm font-medium">Remote Authentication Mode</label>
-              <p className="text-xs text-text-muted mb-1">
-                What login methods are available to non-localhost users. Localhost always has full access.
-              </p>
-              <div className="flex flex-wrap gap-2">
-                {[
-                  { value: "password", label: "Password only" },
-                  { value: "passkey", label: "Passkey only" },
-                  { value: "both", label: "Password + Passkey" },
-                ].map((opt) => (
-                  <button
-                    key={opt.value}
-                    type="button"
-                    onClick={() => handleRemoteAuthModeChange(opt.value)}
-                    disabled={opt.value !== "password" && passkeys.length === 0}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
-                      remoteAuthModeForm === opt.value
-                        ? "bg-primary text-white"
-                        : "bg-sidebar text-text-muted hover:text-text-main"
-                    } disabled:opacity-40 disabled:cursor-not-allowed`}
-                  >
-                    {opt.label}
-                  </button>
-                ))}
-              </div>
-              {passkeys.length === 0 && remoteAuthModeForm !== "password" && (
-                <p className="text-xs text-amber-600 dark:text-amber-400">
-                  Register at least one passkey before switching to passkey-only mode.
-                </p>
-              )}
-            </div>
-
-            <div className="h-px bg-border/50" />
 
             {/* Register new passkey */}
             <div className="flex flex-col gap-2">
