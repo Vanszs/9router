@@ -11,7 +11,18 @@ export async function POST(request) {
     }
 
     const options = await startPasskeyLogin(request);
-    return NextResponse.json(options);
+
+    // Store challenge in a cookie so login/finish can verify it
+    const response = NextResponse.json(options);
+    response.cookies.set("login_challenge", options.challenge, {
+      httpOnly: true,
+      secure: true,
+      sameSite: "lax",
+      path: "/api/auth/passkey/login",
+      maxAge: 120, // 2 minutes
+    });
+
+    return response;
   } catch (error) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }

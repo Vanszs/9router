@@ -80,7 +80,7 @@ export default function MasukClient({ initialAuth }) {
       const options = await startRes.json();
 
       const { startAuthentication } = await import("@/lib/auth/passkeyBrowser.js");
-      const assertion = await startAuthentication({ responseJSON: options });
+      const assertion = await startAuthentication({ optionsJSON: options });
 
       const finishRes = await fetch("/api/auth/passkey/login/finish", {
         method: "POST",

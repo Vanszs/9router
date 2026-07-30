@@ -19,8 +19,23 @@ export async function POST(request) {
       return NextResponse.json({ error: "Missing credential" }, { status: 400 });
     }
 
+    // Read the challenge from the cookie set during register/start
+    // The browser credential response does NOT include the challenge
+    const expectedChallenge = request.cookies.get("passkey_challenge")?.value;
+    if (!expectedChallenge) {
+      return NextResponse.json({ error: "Challenge expired or missing. Please try registering again." }, { status: 400 });
+    }
+
+    // Attach the challenge to the credential object for verification
+    credential.challenge = expectedChallenge;
+
     const result = await finishPasskeyRegistration(request, credential, nickname);
-    return NextResponse.json(result);
+
+    // Clear the challenge cookie
+    const response = NextResponse.json(result);
+    response.cookies.delete("passkey_challenge", { path: "/api/auth/passkey/register" });
+
+    return response;
   } catch (error) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }

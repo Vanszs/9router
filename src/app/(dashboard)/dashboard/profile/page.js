@@ -264,7 +264,7 @@ export default function ProfilePage() {
       const options = await startRes.json();
 
       const { startRegistration } = await import("@/lib/auth/passkeyBrowser.js");
-      const credential = await startRegistration({ responseJSON: options });
+      const credential = await startRegistration({ optionsJSON: options });
 
       const finishRes = await fetch("/api/auth/passkey/register/finish", {
         method: "POST",

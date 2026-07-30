@@ -145,7 +145,7 @@ export default function LoginPage() {
 
       // Browser API: prompt user for passkey
       const { startAuthentication } = await import("@/lib/auth/passkeyBrowser.js");
-      const assertion = await startAuthentication({ responseJSON: options });
+      const assertion = await startAuthentication({ optionsJSON: options });
 
       // Finish authentication
       const finishRes = await fetch("/api/auth/passkey/login/finish", {
