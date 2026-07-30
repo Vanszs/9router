@@ -11,6 +11,7 @@ export default function NoAuthProxyCard({ providerId, isFreeNoAuth = true }) {
   const [proxyPools, setProxyPools] = useState([]);
   const [proxyPoolId, setProxyPoolId] = useState(NONE_PROXY_POOL_VALUE);
   const [rotateStrategy, setRotateStrategy] = useState("none");
+  const [targetProxyPoolIds, setTargetProxyPoolIds] = useState([]);
   const [saving, setSaving] = useState(false);
   const [savedFlash, setSavedFlash] = useState(false);
 
@@ -25,6 +26,7 @@ export default function NoAuthProxyCard({ providerId, isFreeNoAuth = true }) {
       const override = (settingsData.providerStrategies || {})[providerId] || {};
       setProxyPoolId(override.proxyPoolId || NONE_PROXY_POOL_VALUE);
       setRotateStrategy(override.rotateStrategy || "none");
+      setTargetProxyPoolIds(Array.isArray(override.targetProxyPoolIds) ? override.targetProxyPoolIds : []);
     }).catch(() => {});
     return () => controller.abort();
   }, [providerId]);
@@ -50,6 +52,11 @@ export default function NoAuthProxyCard({ providerId, isFreeNoAuth = true }) {
         } else {
           override.proxyPoolId = updatedFields.proxyPoolId;
         }
+      }
+      if ("targetProxyPoolIds" in updatedFields) {
+        const ids = Array.isArray(updatedFields.targetProxyPoolIds) ? updatedFields.targetProxyPoolIds.filter(Boolean) : [];
+        if (ids.length === 0) delete override.targetProxyPoolIds;
+        else override.targetProxyPoolIds = ids;
       }
 
       const updated = { ...current };
@@ -81,6 +88,14 @@ export default function NoAuthProxyCard({ providerId, isFreeNoAuth = true }) {
   const handlePoolChange = (newVal) => {
     setProxyPoolId(newVal);
     handleSave({ proxyPoolId: newVal });
+  };
+
+  const toggleTargetPool = (poolId) => {
+    const next = targetProxyPoolIds.includes(poolId)
+      ? targetProxyPoolIds.filter((id) => id !== poolId)
+      : [...targetProxyPoolIds, poolId];
+    setTargetProxyPoolIds(next);
+    handleSave({ targetProxyPoolIds: next });
   };
 
   return (
@@ -138,6 +153,46 @@ export default function NoAuthProxyCard({ providerId, isFreeNoAuth = true }) {
           </div>
         )}
       </div>
+
+      {rotateStrategy !== "none" && (
+        <div className="mt-4 rounded-xl border border-border/60 bg-surface/40 p-4">
+          <div className="flex items-center justify-between gap-3 mb-3">
+            <div>
+              <p className="text-sm font-medium">Rotation proxy pool subset</p>
+              <p className="text-xs text-text-muted">
+                Select which active pools are eligible for {rotateStrategy}. Leave empty to use all active pools.
+              </p>
+            </div>
+            <Badge variant="secondary" size="sm">
+              {targetProxyPoolIds.length || proxyPools.length} / {proxyPools.length || 0} pools
+            </Badge>
+          </div>
+          {proxyPools.length === 0 ? (
+            <p className="text-xs text-warning">No active proxy pools with URLs found.</p>
+          ) : (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              {proxyPools.map((pool) => {
+                const checked = targetProxyPoolIds.includes(pool.id);
+                return (
+                  <label
+                    key={pool.id}
+                    className={`flex items-center gap-3 rounded-lg border px-3 py-2 text-sm cursor-pointer transition-colors ${checked ? "border-primary/60 bg-primary/10" : "border-border/50 hover:bg-surface-2"}`}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      disabled={saving}
+                      onChange={() => toggleTargetPool(pool.id)}
+                    />
+                    <span className="min-w-0 flex-1 truncate">{pool.name || pool.id}</span>
+                    <span className="text-[10px] text-text-muted font-mono">{pool.id.slice(0, 8)}</span>
+                  </label>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
     </Card>
   );
 }

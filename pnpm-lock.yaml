@@ -32,9 +32,6 @@ importers:
       '@swc/helpers':
         specifier: ^0.5.15
         version: 0.5.15
-      '@tailwindcss/oxide-wasm32-wasi':
-        specifier: 4.3.0
-        version: 4.3.0
       '@xyflow/react':
         specifier: ^12.10.1
         version: 12.11.0(immer@11.1.8)(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
@@ -136,6 +133,9 @@ importers:
         specifier: ^4
         version: 4.3.0
     optionalDependencies:
+      '@tailwindcss/oxide-wasm32-wasi':
+        specifier: ^4.3.3
+        version: 4.3.3
       better-sqlite3:
         specifier: ^12.6.2
         version: 12.10.0
@@ -700,6 +700,18 @@ packages:
 
   '@tailwindcss/oxide-wasm32-wasi@4.3.0':
     resolution: {integrity: sha512-HNZGOUxEmElksYR7S6sC5jTeNGpobAsy9u7Gu0AskJ8/20FR9GqebUyB+HBcU/ax6BHuiuJi+Oda4B+YX6H1yA==}
+    engines: {node: '>=14.0.0'}
+    cpu: [wasm32]
+    bundledDependencies:
+      - '@napi-rs/wasm-runtime'
+      - '@emnapi/core'
+      - '@emnapi/runtime'
+      - '@tybys/wasm-util'
+      - '@emnapi/wasi-threads'
+      - tslib
+
+  '@tailwindcss/oxide-wasm32-wasi@4.3.3':
+    resolution: {integrity: sha512-jx1+rPhY/5Ympkktd656HBWEBLxP7dH06losBLjjf5vgCODXvi9KhtftWcMIwTFIDqBr7cRnQkdLnAG+IOlGvQ==}
     engines: {node: '>=14.0.0'}
     cpu: [wasm32]
     bundledDependencies:
@@ -3510,7 +3522,11 @@ snapshots:
   '@tailwindcss/oxide-linux-x64-musl@4.3.0':
     optional: true
 
-  '@tailwindcss/oxide-wasm32-wasi@4.3.0': {}
+  '@tailwindcss/oxide-wasm32-wasi@4.3.0':
+    optional: true
+
+  '@tailwindcss/oxide-wasm32-wasi@4.3.3':
+    optional: true
 
   '@tailwindcss/oxide-win32-arm64-msvc@4.3.0':
     optional: true

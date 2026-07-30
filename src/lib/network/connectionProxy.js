@@ -187,42 +187,53 @@ export function getProxyHash(providerSpecificData = {}) {
   return "direct";
 }
 
-  // In-memory counters for round-robin / fill-first proxy pool rotation.
-  // Keyed by `${providerId}:${strategy}` so different providers/strategies keep
-  // independent cursors; an integer cursor advances per pick. Process-local is
-  // sufficient — proxy pool rotation is best-effort, not a hard consistency requirement.
-  const _poolCursors = new Map();
+// In-memory counters for round-robin / fill-first proxy pool rotation.
+// Keyed by `${providerId}:${strategy}:${poolIds}` so different providers,
+// strategies, and selected pool subsets keep independent cursors.
+const _poolCursors = new Map();
 
-  /**
-   * Pick a proxy pool id from a list of active pool ids using the configured strategy.
-   *
-   * Strategies:
-   *  - "none" / falsy: returns null (no rotation)
-   *  - "fill-first": always picks the first pool (sticky — drains pool[0] first)
-   *  - "round-robin": advances cursor modulo pool length (fair distribution)
-   *  - "random": uniform random pick
-   *
-   * @param {string[]} poolIds - active proxy pool ids with a proxyUrl
-   * @param {string} strategy - rotation strategy from providerStrategies override
-   * @param {string} providerId - provider id for per-provider cursor isolation
-   * @returns {string|null} chosen pool id, or null when pool is empty / strategy none
-   */
-  export function pickProxyPoolId(poolIds, strategy, providerId = "") {
-    if (!Array.isArray(poolIds) || poolIds.length === 0) return null;
-    const strat = String(strategy || "").toLowerCase();
+function normalizeTargetPoolIds(targetProxyPoolIds) {
+  if (!Array.isArray(targetProxyPoolIds)) return [];
+  return [...new Set(targetProxyPoolIds.map(normalizeString).filter(Boolean))];
+}
 
-    if (strat === "fill-first") return poolIds[0];
+export function filterTargetProxyPoolIds(poolIds, targetProxyPoolIds = []) {
+  if (!Array.isArray(poolIds) || poolIds.length === 0) return [];
+  const targets = normalizeTargetPoolIds(targetProxyPoolIds);
+  if (targets.length === 0) return poolIds;
+  const allowed = new Set(targets);
+  return poolIds.filter((id) => allowed.has(id));
+}
 
-    if (strat === "round-robin") {
-      const key = `${providerId}:${strat}`;
-      const idx = (_poolCursors.get(key) ?? 0) % poolIds.length;
-      _poolCursors.set(key, (idx + 1) % poolIds.length);
-      return poolIds[idx];
-    }
+/**
+ * Pick a proxy pool id from active pool ids using the configured strategy.
+ * Empty targetProxyPoolIds means all active pools. Non-empty targets filter the
+ * rotation subset; if every target is inactive/missing, returns null so callers
+ * can fall back safely instead of silently using an unselected pool.
+ *
+ * @param {string[]} poolIds active proxy pool ids with a proxyUrl
+ * @param {string} strategy rotation strategy from providerStrategies override
+ * @param {string} providerId provider id for per-provider cursor isolation
+ * @param {string[]} targetProxyPoolIds optional selected subset
+ * @returns {string|null} chosen pool id, or null when pool/subset is empty
+ */
+export function pickProxyPoolId(poolIds, strategy, providerId = "", targetProxyPoolIds = []) {
+  const eligiblePoolIds = filterTargetProxyPoolIds(poolIds, targetProxyPoolIds);
+  if (eligiblePoolIds.length === 0) return null;
+  const strat = String(strategy || "").toLowerCase();
 
-    if (strat === "random") {
-      return poolIds[Math.floor(Math.random() * poolIds.length)];
-    }
+  if (strat === "fill-first") return eligiblePoolIds[0];
 
-    return null;
+  if (strat === "round-robin") {
+    const key = `${providerId}:${strat}:${eligiblePoolIds.join(",")}`;
+    const idx = (_poolCursors.get(key) ?? 0) % eligiblePoolIds.length;
+    _poolCursors.set(key, (idx + 1) % eligiblePoolIds.length);
+    return eligiblePoolIds[idx];
   }
+
+  if (strat === "random") {
+    return eligiblePoolIds[Math.floor(Math.random() * eligiblePoolIds.length)];
+  }
+
+  return null;
+}
