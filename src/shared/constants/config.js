@@ -89,6 +89,12 @@ export const QUOTA_AUTOPING_CONFIG = {
       pingInstructions: "Reply with OK.",
       pingReasoningEffort: "none",
     },
+    antigravity: {
+      settingsKey: "antigravityAutoPing",
+      quotaKey: "gemini_bucket",
+      pingModel: "gemini-3.5-flash-low",
+      pingText: "hi",
+    },
   },
 };
 
