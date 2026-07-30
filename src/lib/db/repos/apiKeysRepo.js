@@ -21,6 +21,13 @@ function parseLimitInt(raw) {
   return Number.isFinite(n) && n >= 0 ? Math.floor(n) : null;
 }
 
+const VALIDATE_CACHE_TTL_MS = 2_000;
+const _validateCache = new Map();
+
+function clearValidateCache() {
+  _validateCache.clear();
+}
+
 function rowToKey(row) {
   if (!row) return null;
   return {
@@ -99,6 +106,7 @@ export async function createApiKey(name, machineId, limits = {}) {
       apiKey.tokens5h, apiKey.tokensWeekly, apiKey.tokensMonthly,
     ]
   );
+  clearValidateCache();
   return apiKey;
 }
 
@@ -156,23 +164,37 @@ export async function updateApiKey(id, data) {
     );
     result = merged;
   });
+  clearValidateCache();
   return result;
 }
 
 export async function deleteApiKey(id) {
   const db = await getAdapter();
   const res = db.run(`DELETE FROM apiKeys WHERE id = ?`, [id]);
+  clearValidateCache();
   return (res?.changes ?? 0) > 0;
 }
 
 export async function validateApiKey(key) {
+  const now = Date.now();
+  const cached = _validateCache.get(key);
+  if (cached && cached.expiresAt > now) return cached.value;
+
   const db = await getAdapter();
   const row = db.get(`SELECT * FROM apiKeys WHERE key = ?`, [key]);
-  if (!row || (row.isActive !== 1 && row.isActive !== true)) return null;
-  const apiKey = rowToKey(row);
-  if (apiKey.expiresAt) {
-    const expiry = new Date(apiKey.expiresAt).getTime();
-    if (expiry && expiry <= Date.now()) return null;
+  let value = null;
+  if (row && (row.isActive === 1 || row.isActive === true)) {
+    const apiKey = rowToKey(row);
+    if (apiKey.expiresAt) {
+      const expiry = new Date(apiKey.expiresAt).getTime();
+      value = expiry && expiry <= now ? null : apiKey;
+    } else {
+      value = apiKey;
+    }
   }
-  return apiKey;
+  const cacheExpiresAt = value?.expiresAt
+    ? Math.min(now + VALIDATE_CACHE_TTL_MS, new Date(value.expiresAt).getTime())
+    : now + VALIDATE_CACHE_TTL_MS;
+  _validateCache.set(key, { value, expiresAt: cacheExpiresAt });
+  return value;
 }
