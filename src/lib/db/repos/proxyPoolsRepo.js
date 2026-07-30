@@ -39,7 +39,28 @@ function upsert(db, p) {
   );
 }
 
+const PROXY_POOL_CACHE_TTL_MS = 2_000;
+const _proxyPoolCache = new Map();
+
+function clearProxyPoolCache() {
+  _proxyPoolCache.clear();
+}
+
+function getCached(key) {
+  const entry = _proxyPoolCache.get(key);
+  if (!entry || entry.expiresAt <= Date.now()) return undefined;
+  return entry.value;
+}
+
+function setCached(key, value) {
+  _proxyPoolCache.set(key, { value, expiresAt: Date.now() + PROXY_POOL_CACHE_TTL_MS });
+}
+
 export async function getProxyPools(filter = {}) {
+  const cacheKey = `list:${JSON.stringify(filter)}`;
+  const cached = getCached(cacheKey);
+  if (cached !== undefined) return cached;
+
   const db = await getAdapter();
   const where = [];
   const params = [];
@@ -48,12 +69,19 @@ export async function getProxyPools(filter = {}) {
   const sql = `SELECT * FROM proxyPools${where.length ? ` WHERE ${where.join(" AND ")}` : ""}`;
   const list = db.all(sql, params).map(rowToPool);
   list.sort((a, b) => new Date(b.updatedAt || 0) - new Date(a.updatedAt || 0));
+  setCached(cacheKey, list);
   return list;
 }
 
 export async function getProxyPoolById(id) {
+  const cacheKey = `id:${id}`;
+  const cached = getCached(cacheKey);
+  if (cached !== undefined) return cached;
+
   const db = await getAdapter();
-  return rowToPool(db.get(`SELECT * FROM proxyPools WHERE id = ?`, [id]));
+  const pool = rowToPool(db.get(`SELECT * FROM proxyPools WHERE id = ?`, [id]));
+  setCached(cacheKey, pool);
+  return pool;
 }
 
 export async function createProxyPool(data) {
@@ -74,6 +102,7 @@ export async function createProxyPool(data) {
     updatedAt: now,
   };
   upsert(db, pool);
+  clearProxyPoolCache();
   return pool;
 }
 
@@ -87,6 +116,7 @@ export async function updateProxyPool(id, data) {
     upsert(db, merged);
     result = merged;
   });
+  clearProxyPoolCache();
   return result;
 }
 
@@ -99,5 +129,6 @@ export async function deleteProxyPool(id) {
     removed = rowToPool(row);
     db.run(`DELETE FROM proxyPools WHERE id = ?`, [id]);
   });
+  clearProxyPoolCache();
   return removed;
 }

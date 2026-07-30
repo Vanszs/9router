@@ -14,6 +14,13 @@ function serializePermList(val) {
   return JSON.stringify(Array.isArray(val) ? val : []);
 }
 
+const VALIDATE_CACHE_TTL_MS = 2_000;
+const _validateCache = new Map();
+
+function clearValidateCache() {
+  _validateCache.clear();
+}
+
 function rowToKey(row) {
   if (!row) return null;
   return {
@@ -63,6 +70,7 @@ export async function createApiKey(name, machineId) {
     `INSERT INTO apiKeys(id, key, name, machineId, isActive, createdAt, allowedProviders, allowedCombos, allowedKinds) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [apiKey.id, apiKey.key, apiKey.name, apiKey.machineId, 1, apiKey.createdAt, null, null, null]
   );
+  clearValidateCache();
   return apiKey;
 }
 
@@ -95,18 +103,29 @@ export async function updateApiKey(id, data) {
     );
     result = merged;
   });
+  clearValidateCache();
   return result;
 }
 
 export async function deleteApiKey(id) {
   const db = await getAdapter();
   const res = db.run(`DELETE FROM apiKeys WHERE id = ?`, [id]);
+  clearValidateCache();
   return (res?.changes ?? 0) > 0;
 }
 
 export async function validateApiKey(key) {
+  const now = Date.now();
+  const cached = _validateCache.get(key);
+  if (cached && cached.expiresAt > now) return cached.value;
+
   const db = await getAdapter();
   const row = db.get(`SELECT * FROM apiKeys WHERE key = ?`, [key]);
-  if (!row || row.isActive !== 1 && row.isActive !== true) return null;
-  return rowToKey(row);
+  if (!row || (row.isActive !== 1 && row.isActive !== true)) {
+    _validateCache.set(key, { value: null, expiresAt: now + VALIDATE_CACHE_TTL_MS });
+    return null;
+  }
+  const value = rowToKey(row);
+  _validateCache.set(key, { value, expiresAt: now + VALIDATE_CACHE_TTL_MS });
+  return value;
 }
