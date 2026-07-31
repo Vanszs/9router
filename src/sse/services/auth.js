@@ -55,7 +55,9 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
       if (strategy !== "none") {
         const allPools = await getProxyPools({ isActive: true });
         const poolIds = allPools.filter(p => p.proxyUrl).map(p => p.id);
-        pickedId = pickProxyPoolId(poolIds, strategy, providerId);
+        pickedId = pickProxyPoolId(poolIds, strategy, providerId, override.targetProxyPoolIds);
+        const targetCount = Array.isArray(override.targetProxyPoolIds) ? override.targetProxyPoolIds.length : 0;
+        log.info("PROXY", `${providerId.toUpperCase()} | no-auth ${strategy} | pool=${pickedId || "none"} | targets=${targetCount || "all"}/${poolIds.length}`);
       }
       const resolvedProxy = await resolveConnectionProxyConfig({ proxyPoolId: pickedId || "" });
       return {
@@ -187,7 +189,9 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
       const allPools = await getProxyPools({ isActive: true });
       const poolIds = allPools.filter(p => p.proxyUrl).map(p => p.id);
       if (poolIds.length > 0) {
-        rotProxyPoolId = pickProxyPoolId(poolIds, proxyStrategy, providerId);
+        rotProxyPoolId = pickProxyPoolId(poolIds, proxyStrategy, providerId, proxyOverride.targetProxyPoolIds);
+        const targetCount = Array.isArray(proxyOverride.targetProxyPoolIds) ? proxyOverride.targetProxyPoolIds.length : 0;
+        log.info("PROXY", `${providerId.toUpperCase()} | ${model || "any"} | strategy=${proxyStrategy} | conn=${connection.displayName || connection.name || connection.email || connection.id} | pool=${rotProxyPoolId || "none"} | targets=${targetCount || "all"}/${poolIds.length}`);
       }
     }
     const resolvedProxy = await resolveConnectionProxyConfig({

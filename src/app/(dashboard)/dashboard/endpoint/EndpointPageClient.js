@@ -4,17 +4,13 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { Card, Button, Input, Modal, CardSkeleton, Toggle, ConfirmModal } from "@/shared/components";
 import { useCopyToClipboard } from "@/shared/hooks/useCopyToClipboard";
 import { fetchCached, invalidateCache } from "@/shared/utils/fetchCache";
-import { getCurrentLocale, onLocaleChange } from "@/i18n/runtime";
 import {
-  WENYAN_LOCALES,
   TUNNEL_BENEFITS,
   TUNNEL_PING_INTERVAL_MS,
   TUNNEL_PING_MAX_MS,
   STATUS_POLL_FAST_MS,
   REACHABLE_MISS_THRESHOLD,
   CLIENT_PING_FAST_MS,
-  CAVEMAN_LEVELS,
-  PONYTAIL_LEVELS,
 } from "./endpointConstants";
 import { clientPingUrl, clientPingAny } from "./endpointPing";
 import EndpointRow from "./components/EndpointRow";
@@ -62,19 +58,6 @@ export default function APIPageClient({ machineId }) {
   const [requireLogin, setRequireLogin] = useState(true);
   const [hasPassword, setHasPassword] = useState(true);
   const [tunnelDashboardAccess, setTunnelDashboardAccess] = useState(false);
-  const [rtkEnabled, setRtkEnabledState] = useState(true);
-  const [headroomEnabled, setHeadroomEnabled] = useState(false);
-  const [headroomUrl, setHeadroomUrl] = useState("http://localhost:8787");
-  const [headroomCompressUserMessages, setHeadroomCompressUserMessages] = useState(false);
-  const [headroomStatus, setHeadroomStatus] = useState({ installed: false, running: false, python: null, loading: true });
-  const [showHeadroomInstallModal, setShowHeadroomInstallModal] = useState(false);
-  const [headroomActionLoading, setHeadroomActionLoading] = useState(false);
-  const [headroomActionError, setHeadroomActionError] = useState("");
-  const [cavemanEnabled, setCavemanEnabled] = useState(false);
-  const [cavemanLevel, setCavemanLevel] = useState("full");
-  const [ponytailEnabled, setPonytailEnabled] = useState(false);
-  const [ponytailLevel, setPonytailLevel] = useState("full");
-  const [locale, setLocale] = useState("en");
 
   // Cloudflare Tunnel state
   const [tunnelChecking, setTunnelChecking] = useState(true);
@@ -124,12 +107,11 @@ export default function APIPageClient({ machineId }) {
   const [visibleKeys, setVisibleKeys] = useState(new Set());
 
   /* eslint-disable react-hooks/set-state-in-effect, react-hooks/immutability --
-     The useEffects below intentionally run once on mount (locale detection,
-     bootstrap fetch, scroll-into-view, status poll) or sync external state
-     changes back into the UI (caveman level reset when locale changes). The
-     handler functions they call (syncTunnelStatus, loadSettings, patchSetting,
-     fetchData) are declared further down in this 2000-line file, which is
-     a static-analysis limitation, not a runtime bug — closures capture the
+     The useEffects below intentionally run once on mount (bootstrap fetch,
+     scroll-into-view, status poll) or sync external state changes back into
+     the UI. The handler functions they call (syncTunnelStatus, loadSettings,
+     fetchData) are declared further down in this file, which is a
+     static-analysis limitation, not a runtime bug — closures capture the
      declarations correctly when the effects run. */
 
   // Client-side local/remote detection (UI hint only, not a security gate)
@@ -139,29 +121,6 @@ export default function APIPageClient({ machineId }) {
       // eslint-disable-next-line react-hooks/set-state-in-effect -- one-time client-only detection on mount.
       setIsRemoteHost(!["localhost", "127.0.0.1", "::1"].includes(window.location.hostname));
   }, []);
-
-  // Track app UI locale to gate wenyan caveman levels
-  useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- one-time locale sync on mount; effect is intentional, not a derived value.
-    setLocale(getCurrentLocale());
-    return onLocaleChange(() => setLocale(getCurrentLocale()));
-  }, []);
-
-  const isWenyanLocale = WENYAN_LOCALES.includes(locale);
-  const visibleCavemanLevels = isWenyanLocale
-    ? CAVEMAN_LEVELS
-    : CAVEMAN_LEVELS.filter((lvl) => !lvl.wenyan);
-
-  // Reset wenyan level to "ultra" when leaving a Chinese locale
-  // eslint-disable-next-line react-hooks/immutability -- patchSetting is declared further down in the file; captured by closure at runtime.
-  useEffect(() => {
-    const current = CAVEMAN_LEVELS.find((lvl) => lvl.id === cavemanLevel);
-    if (current?.wenyan && !isWenyanLocale) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect -- syncs external UI locale change back into local storage; effect is intentional.
-      setCavemanLevel("ultra");
-      patchSetting({ cavemanLevel: "ultra" });
-    }
-  }, [isWenyanLocale, cavemanLevel]);
 
   const { copied, copy } = useCopyToClipboard();
 
@@ -292,15 +251,6 @@ export default function APIPageClient({ machineId }) {
         setRequireLogin(data.requireLogin !== false);
         setHasPassword(data.hasPassword || false);
         setTunnelDashboardAccess(data.tunnelDashboardAccess || false);
-        setRtkEnabledState(data.rtkEnabled !== false);
-        setHeadroomEnabled(!!data.headroomEnabled);
-        setHeadroomUrl(data.headroomUrl || "http://localhost:8787");
-        setHeadroomCompressUserMessages(!!data.headroomCompressUserMessages);
-        refreshHeadroomStatus();
-        setCavemanEnabled(!!data.cavemanEnabled);
-        setCavemanLevel(data.cavemanLevel || "full");
-        setPonytailEnabled(!!data.ponytailEnabled);
-        setPonytailLevel(data.ponytailLevel || "full");
       }
       if (statusRes.ok) {
         const data = await statusRes.json();
@@ -365,106 +315,6 @@ export default function APIPageClient({ machineId }) {
     } catch (error) {
       console.log("Error updating allowRemoteNoApiKey:", error);
     }
-  };
-
-  const handleRtkEnabled = async (value) => {
-    try {
-      const res = await fetch("/api/settings", {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ rtkEnabled: value }),
-      });
-      if (res.ok) setRtkEnabledState(value);
-    } catch (error) {
-      console.log("Error updating rtkEnabled:", error);
-    }
-  };
-
-  const patchSetting = async (patch) => {
-    try {
-      await fetch("/api/settings", {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(patch),
-      });
-    } catch (error) {
-      console.log("Error updating setting:", error);
-    }
-  };
-
-  const handleCavemanEnabled = (value) => {
-    setCavemanEnabled(value);
-    patchSetting({ cavemanEnabled: value });
-  };
-
-  const handleHeadroomEnabled = (value) => {
-    const nextUrl = headroomUrl.trim() || "http://localhost:8787";
-    setHeadroomUrl(nextUrl);
-    setHeadroomEnabled(value);
-    patchSetting({ headroomEnabled: value, headroomUrl: nextUrl });
-  };
-
-  const handleHeadroomUrlBlur = async () => {
-    const next = headroomUrl.trim() || "http://localhost:8787";
-    setHeadroomUrl(next);
-    await patchSetting({ headroomUrl: next });
-    refreshHeadroomStatus();
-  };
-
-  const handleHeadroomCompressUserMessages = (value) => {
-    setHeadroomCompressUserMessages(value);
-    patchSetting({ headroomCompressUserMessages: value });
-  };
-
-  const refreshHeadroomStatus = useCallback(async () => {
-    setHeadroomStatus((s) => ({ ...s, loading: true }));
-    try {
-      const res = await fetch("/api/headroom/status", { headers: { "Cache-Control": "no-store" } });
-      const data = await res.json();
-      setHeadroomStatus({ ...data, loading: false });
-    } catch {
-      setHeadroomStatus({ installed: false, running: false, python: null, loading: false });
-    }
-  }, []);
-
-  const handleHeadroomStart = useCallback(async () => {
-    setHeadroomActionError("");
-    setHeadroomActionLoading(true);
-    try {
-      const res = await fetch("/api/headroom/start", { method: "POST" });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.error || "Failed to start proxy");
-      await refreshHeadroomStatus();
-    } catch (e) {
-      setHeadroomActionError(e.message);
-    } finally {
-      setHeadroomActionLoading(false);
-    }
-  }, [refreshHeadroomStatus]);
-
-  const handleHeadroomStop = useCallback(async () => {
-    setHeadroomActionLoading(true);
-    try {
-      await fetch("/api/headroom/stop", { method: "POST" });
-      await refreshHeadroomStatus();
-    } finally {
-      setHeadroomActionLoading(false);
-    }
-  }, [refreshHeadroomStatus]);
-
-  const handleCavemanLevel = (level) => {
-    setCavemanLevel(level);
-    patchSetting({ cavemanLevel: level });
-  };
-
-  const handlePonytailEnabled = (value) => {
-    setPonytailEnabled(value);
-    patchSetting({ ponytailEnabled: value });
-  };
-
-  const handlePonytailLevel = (level) => {
-    setPonytailLevel(level);
-    patchSetting({ ponytailLevel: level });
   };
 
   // ── ACL Edit Key handlers ──────────────────────────────────────────
@@ -577,17 +427,18 @@ export default function APIPageClient({ machineId }) {
         allowedProviders: editProvidersAll ? null : editProviders,
         allowedCombos: editCombosAll ? null : editCombos,
         allowedKinds: editKindsAll ? null : editKinds,
+        allowedModels: editModelsAll ? null : editModels,
         limits: {
-          expiresAt: editExpiresAt ? new Date(editExpiresAt).toISOString() : null,
-          maxTokens: parseNum(editMaxTokens),
-          maxTokensDaily: parseNum(editMaxTokensDaily),
-          rpm: parseNum(editRpm),
-          rph: parseNum(editRph),
-          rpd: parseNum(editRpd),
-          tokens5h: parseNum(editTokens5h),
-          tokensWeekly: parseNum(editTokensWeekly),
-          tokensMonthly: parseNum(editTokensMonthly),
-        },
+            expiresAt: editExpiresAt ? new Date(editExpiresAt).toISOString() : null,
+            maxTokens: parseNum(editMaxTokens),
+            maxTokensDaily: parseNum(editMaxTokensDaily),
+            rpm: parseNum(editRpm),
+            rph: parseNum(editRph),
+            rpd: parseNum(editRpd),
+            tokens5h: parseNum(editTokens5h),
+            tokensWeekly: parseNum(editTokensWeekly),
+            tokensMonthly: parseNum(editTokensMonthly),
+          },
       };
       const res = await fetch(`/api/keys/${editingKey.id}`, {
         method: "PUT",
@@ -888,9 +739,13 @@ export default function APIPageClient({ machineId }) {
 
       if (res.ok && data.success) {
         setTsUrl(data.tunnelUrl || "");
-        const reachable = await pingTsHealth(data.tunnelUrl);
+        let reachable = false;
+        if (data.tunnelUrl) {
+          reachable = await pingTsHealth(data.tunnelUrl);
+        }
         setTsEnabled(true);
-        setTsStatus(reachable ? null : { type: "warning", message: "Connected but not reachable yet." });
+        setTsReachable(reachable);
+        setTsStatus(reachable ? null : { type: "warning", message: data.tunnelUrl ? "Connected but not reachable yet." : "Tailscale connected, but no Funnel URL was returned yet." });
         return;
       }
 
@@ -910,9 +765,10 @@ export default function APIPageClient({ machineId }) {
                 const data2 = await res2.json();
                 if (res2.ok && data2.success) {
                   setTsUrl(data2.tunnelUrl || "");
-                  const ok2 = await pingTsHealth(data2.tunnelUrl);
+                  const ok2 = data2.tunnelUrl ? await pingTsHealth(data2.tunnelUrl) : false;
                   setTsEnabled(true);
-                  setTsStatus(ok2 ? null : { type: "warning", message: "Connected but not reachable yet." });
+                  setTsReachable(ok2);
+                  setTsStatus(ok2 ? null : { type: "warning", message: data2.tunnelUrl ? "Connected but not reachable yet." : "Tailscale connected, but no Funnel URL was returned yet." });
                 } else if (data2.funnelNotEnabled && data2.enableUrl) {
                   await pollFunnelEnable(data2.enableUrl);
                 } else {
@@ -923,8 +779,7 @@ export default function APIPageClient({ machineId }) {
             }
           } catch { /* retry */ }
         }
-        clearUserAuth();
-        setTsStatus({ type: "error", message: "Login timed out. Please try again." });
+        setTsStatus({ type: "warning", message: "Login is still pending. Open the login page, then click Enable again after logging in." });
         return;
       }
 
@@ -940,7 +795,6 @@ export default function APIPageClient({ machineId }) {
       setTsLoading(false);
       setTsConnecting(false);
       setTsProgress("");
-      clearUserAuth();
     }
   };
 
@@ -955,9 +809,10 @@ export default function APIPageClient({ machineId }) {
         if (res.ok && data.success) {
           clearUserAuth();
           setTsUrl(data.tunnelUrl || "");
-          const ok3 = await pingTsHealth(data.tunnelUrl);
+          const ok3 = data.tunnelUrl ? await pingTsHealth(data.tunnelUrl) : false;
           setTsEnabled(true);
-          setTsStatus(ok3 ? null : { type: "warning", message: "Connected but not reachable yet." });
+          setTsReachable(ok3);
+          setTsStatus(ok3 ? null : { type: "warning", message: data.tunnelUrl ? "Connected but not reachable yet." : "Tailscale connected, but no Funnel URL was returned yet." });
           return;
         }
         if (data.funnelNotEnabled) continue;
@@ -1070,6 +925,37 @@ export default function APIPageClient({ machineId }) {
     return fullKey.slice(0, 6) + "•".repeat(fullKey.length - 10) + fullKey.slice(-4);
   };
 
+
+  const formatQuotaValue = (value) => {
+    if (value === null || value === undefined) return "∞";
+    return Number(value).toLocaleString();
+  };
+
+  const getKeyStatusMeta = (key) => {
+    const status = key.usage?.status || (key.isActive === false ? "paused" : "ok");
+    const map = {
+      ok: { label: "Healthy", icon: "check_circle", cls: "bg-green-500/10 text-green-600 dark:text-green-400" },
+      warning: { label: "Watch", icon: "warning", cls: "bg-yellow-500/10 text-yellow-600 dark:text-yellow-400" },
+      danger: { label: "Near limit", icon: "error", cls: "bg-orange-500/10 text-orange-600 dark:text-orange-400" },
+      blocked: { label: "Blocked", icon: "block", cls: "bg-red-500/10 text-red-600 dark:text-red-400" },
+      paused: { label: "Paused", icon: "pause_circle", cls: "bg-slate-500/10 text-slate-500" },
+    };
+    return map[status] || map.ok;
+  };
+
+  const quotaMetrics = (key) => {
+    const metrics = key.usage?.metrics || {};
+    return ["rpm", "rph", "rpd", "maxTokensDaily", "tokens5h", "tokensWeekly", "tokensMonthly"]
+      .map((id) => ({ id, ...(metrics[id] || {}) }))
+      .filter((m) => m.limit !== null && m.limit !== undefined);
+  };
+
+  const quotaBarClass = (status) => {
+    if (status === "blocked" || status === "danger") return "bg-red-500";
+    if (status === "warning") return "bg-yellow-500";
+    return "bg-primary";
+  };
+
   const toggleKeyVisibility = (keyId) => {
     setVisibleKeys(prev => {
       const next = new Set(prev);
@@ -1099,19 +985,6 @@ export default function APIPageClient({ machineId }) {
   }
 
   const currentEndpoint = baseUrl;
-  const headroomRunning = !!headroomStatus.running;
-  const headroomLocalUrl = headroomStatus.localUrl !== false;
-  const headroomCanStart = !!headroomStatus.canStart;
-  const headroomManaged = headroomLocalUrl && !!headroomStatus.managedPid;
-  const headroomStatusLabel = headroomStatus.loading
-    ? "Checking…"
-    : headroomRunning
-      ? "Running"
-      : headroomLocalUrl && !headroomStatus.installed
-        ? "Not installed"
-        : headroomLocalUrl
-          ? "Proxy off"
-          : "Unreachable";
 
   return (
     <div className="flex flex-col gap-8">
@@ -1369,167 +1242,6 @@ export default function APIPageClient({ machineId }) {
         )}
       </Card>
 
-      {/* Token Saver (RTK + Caveman + Ponytail + Headroom) */}
-      <Card id="rtk">
-        <div className="flex items-center justify-between mb-2">
-          <h2 className="text-lg font-semibold flex items-center gap-2">
-            <span className="material-symbols-outlined text-primary">bolt</span>
-            Token Saver
-          </h2>
-        </div>
-        <div className="flex items-center justify-between pt-2 pb-4 border-b border-border gap-4">
-          <div className="min-w-0 flex-1">
-            <p className="font-medium">
-              Compress tool output{" "}
-              <a
-                href="https://github.com/rtk-ai/rtk"
-                target="_blank"
-                rel="noreferrer"
-                className="text-xs font-normal text-primary underline hover:opacity-80"
-              >
-                (RTK)
-              </a>
-            </p>
-            <p className="text-sm text-text-muted">
-              git/grep/ls/tree/logs → 60-90% fewer input tokens
-            </p>
-          </div>
-          <Toggle
-            checked={rtkEnabled}
-            onChange={() => handleRtkEnabled(!rtkEnabled)}
-          />
-        </div>
-        <div className="flex items-center justify-between py-4 border-b border-border gap-4 flex-wrap">
-          <div className="min-w-0 flex-1">
-            <div className="flex items-center gap-3 flex-wrap">
-              <p className="font-medium">
-                Compress context{" "}
-                <a
-                  href="https://github.com/chopratejas/headroom"
-                  target="_blank"
-                  rel="noreferrer"
-                  className="text-xs font-normal text-primary underline hover:opacity-80"
-                >
-                  (Headroom)
-                </a>
-              </p>
-              <span className={`text-xs px-2 py-0.5 rounded ${headroomRunning ? "bg-success/15 text-success" : "bg-warning/15 text-warning"}`}>
-                {headroomStatusLabel}
-              </span>
-              <button
-                type="button"
-                onClick={() => setShowHeadroomInstallModal(true)}
-                className="text-xs text-primary underline hover:opacity-80"
-              >
-                  {headroomRunning ? "Manage" : "Setup"}
-              </button>
-            </div>
-            <p className="text-sm text-text-muted mt-1">
-              Compress prompts via /v1/compress before routing to the model
-            </p>
-          </div>
-          <Toggle
-            checked={headroomEnabled && headroomRunning}
-            disabled={!headroomRunning}
-            onChange={() => handleHeadroomEnabled(!headroomEnabled)}
-          />
-        </div>
-        <div className="flex items-center justify-between pt-4 gap-4 flex-wrap">
-          <div className="min-w-0 flex-1">
-            <p className="font-medium">
-              Compress LLM output{" "}
-              <a
-                href="https://github.com/JuliusBrussee/caveman"
-                target="_blank"
-                rel="noreferrer"
-                className="text-xs font-normal text-primary underline hover:opacity-80"
-              >
-                (Caveman)
-              </a>
-            </p>
-            <p className="text-sm text-text-muted">
-              Terse-style system prompt → ~65% fewer output tokens (up to 87%)
-            </p>
-          </div>
-          <div className="flex items-center gap-3 shrink-0">
-            {cavemanEnabled && (
-              <div className="flex flex-col items-end gap-1">
-                <div className="flex items-center gap-1.5">
-                  {visibleCavemanLevels.map((lvl) => (
-                    <button
-                      key={lvl.id}
-                      onClick={() => handleCavemanLevel(lvl.id)}
-                      className={`px-3 py-1.5 rounded text-xs font-medium border transition-colors ${
-                        cavemanLevel === lvl.id
-                          ? "bg-primary text-white border-primary"
-                          : "bg-transparent border-border text-text-muted hover:bg-surface-2"
-                      }`}
-                      title={lvl.desc}
-                    >
-                      {lvl.label}
-                    </button>
-                  ))}
-                </div>
-                <p className="text-xs text-primary">
-                  {CAVEMAN_LEVELS.find((lvl) => lvl.id === cavemanLevel)?.desc}
-                </p>
-              </div>
-            )}
-            <Toggle
-              checked={cavemanEnabled}
-              onChange={() => handleCavemanEnabled(!cavemanEnabled)}
-            />
-          </div>
-        </div>
-        <div className="flex items-center justify-between pt-4 mt-4 border-t border-border gap-4 flex-wrap">
-          <div className="min-w-0 flex-1">
-            <p className="font-medium">
-              Lazy senior dev{" "}
-              <a
-                href="https://github.com/DietrichGebert/ponytail"
-                target="_blank"
-                rel="noreferrer"
-                className="text-xs font-normal text-primary underline hover:opacity-80"
-              >
-                (Ponytail)
-              </a>
-            </p>
-            <p className="text-sm text-text-muted">
-              Bias the model toward minimal code: YAGNI, reuse stdlib, deletion over addition
-            </p>
-          </div>
-          <div className="flex items-center gap-3 shrink-0">
-            {ponytailEnabled && (
-              <div className="flex flex-col items-end gap-1">
-                <div className="flex items-center gap-1.5">
-                  {PONYTAIL_LEVELS.map((lvl) => (
-                    <button
-                      key={lvl.id}
-                      onClick={() => handlePonytailLevel(lvl.id)}
-                      className={`px-3 py-1.5 rounded text-xs font-medium border transition-colors ${
-                        ponytailLevel === lvl.id
-                          ? "bg-primary text-white border-primary"
-                          : "bg-transparent border-border text-text-muted hover:bg-surface-2"
-                      }`}
-                      title={lvl.desc}
-                    >
-                      {lvl.label}
-                    </button>
-                  ))}
-                </div>
-                <p className="text-xs text-primary">
-                  {PONYTAIL_LEVELS.find((lvl) => lvl.id === ponytailLevel)?.desc}
-                </p>
-              </div>
-            )}
-            <Toggle
-              checked={ponytailEnabled}
-              onChange={() => handlePonytailEnabled(!ponytailEnabled)}
-            />
-          </div>
-        </div>
-      </Card>
-
       {/* API Keys */}
       <Card id="require-api-key">
         <div className="flex items-center justify-between mb-4">
@@ -1584,6 +1296,23 @@ export default function APIPageClient({ machineId }) {
           </div>
         )}
 
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4">
+          <div className="rounded-xl border border-border/50 bg-surface/40 p-4">
+            <p className="text-xs text-text-muted">Total keys</p>
+            <p className="text-2xl font-semibold mt-1">{keys.length}</p>
+          </div>
+          <div className="rounded-xl border border-border/50 bg-surface/40 p-4">
+            <p className="text-xs text-text-muted">Active</p>
+            <p className="text-2xl font-semibold mt-1 text-green-500">{keys.filter((k) => k.isActive !== false).length}</p>
+          </div>
+          <div className="rounded-xl border border-border/50 bg-surface/40 p-4">
+            <p className="text-xs text-text-muted">Needs attention</p>
+            <p className="text-2xl font-semibold mt-1 text-orange-500">
+              {keys.filter((k) => ["warning", "danger", "blocked", "paused"].includes(k.usage?.status || (k.isActive === false ? "paused" : "ok"))).length}
+            </p>
+          </div>
+        </div>
+
         {keys.length === 0 ? (
           <div className="text-center py-12">
             <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-primary/10 text-primary mb-4">
@@ -1596,123 +1325,125 @@ export default function APIPageClient({ machineId }) {
             </Button>
           </div>
         ) : (
-          <div className="flex flex-col">
-            {keys.map((key) => (
-              <div
-                key={key.id}
-                className={`group flex items-center justify-between py-3 border-b border-black/[0.03] dark:border-white/[0.03] last:border-b-0 ${key.isActive === false ? "opacity-60" : ""}`}
-              >
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-medium">{key.name}</p>
-                  <div className="flex items-center gap-2 mt-1">
-                    <code className="text-xs text-text-muted font-mono">
-                      {visibleKeys.has(key.id) ? key.key : maskKey(key.key)}
-                    </code>
-                    <button
-                      onClick={() => toggleKeyVisibility(key.id)}
-                      className="p-1 hover:bg-black/5 dark:hover:bg-white/5 rounded text-text-muted hover:text-primary opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-all"
-                      title={visibleKeys.has(key.id) ? "Hide key" : "Show key"}
-                    >
-                      <span className="material-symbols-outlined text-[14px]">
-                        {visibleKeys.has(key.id) ? "visibility_off" : "visibility"}
-                      </span>
-                    </button>
-                    <button
-                      onClick={() => copy(key.key, key.id)}
-                      className="p-1 hover:bg-black/5 dark:hover:bg-white/5 rounded text-text-muted hover:text-primary opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-all"
-                    >
-                      <span className="material-symbols-outlined text-[14px]">
-                        {copied === key.id ? "check" : "content_copy"}
-                      </span>
-                    </button>
-                  </div>
-                  <p className="text-xs text-text-muted mt-1">
-                    Created {new Date(key.createdAt).toLocaleDateString()}
-                  </p>
-                   {key.isActive === false && (
-                    <p className="text-xs text-orange-500 mt-1">Paused</p>
-                  )}
-                  {key.expiresAt && (
-                    <p className="text-xs text-text-muted mt-1">
-                      Expires {new Date(key.expiresAt).toLocaleString()}
-                    </p>
-                  )}
-                   {/* ACL badges */}
-                  {(key.allowedProviders || key.allowedCombos || key.allowedKinds || key.allowedModels) && (
-                    <div className="flex flex-wrap gap-1 mt-1">
-                      {key.allowedProviders && (
-                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-500 dark:bg-blue-500/20" title={key.allowedProviders.join(", ")}>
-                          {key.allowedProviders.length === 0
-                            ? "No providers"
-                            : key.allowedProviders.map((stored) => {
-                                // Try providerList first (has connections)
-                                const p = providerList.find((pp) => pp.id === stored || pp.alias === stored || pp.prefix === stored);
-                                if (p) return p.displayName;
-                                // Try aliasMap for providers without connections
-                                const resolved = aliasMap[stored];
-                                if (resolved) return resolved;
-                                return stored;
-                              }).join(", ")}
+          <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+            {keys.map((key) => {
+              const statusMeta = getKeyStatusMeta(key);
+              const metrics = quotaMetrics(key);
+              return (
+                <div
+                  key={key.id}
+                  className={`group rounded-2xl border border-border/60 bg-surface/50 p-4 shadow-sm ${key.isActive === false ? "opacity-70" : ""}`}
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <p className="text-sm font-semibold truncate">{key.name}</p>
+                        <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium ${statusMeta.cls}`}>
+                          <span className="material-symbols-outlined text-[13px]">{statusMeta.icon}</span>
+                          {statusMeta.label}
                         </span>
-                      )}
-                      {key.allowedCombos && (
-                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-purple-500/10 text-purple-500 dark:bg-purple-500/20">
-                          {key.allowedCombos.length === 0 ? "No combos" : key.allowedCombos.join(", ")}
-                        </span>
-                      )}
-                      {key.allowedKinds && (
-                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-green-500/10 text-green-500 dark:bg-green-500/20">
-                          {key.allowedKinds.length === 0 ? "No kinds" : key.allowedKinds.join(", ")}
-                        </span>
-                      )}
-                      {key.rpm != null && <span className="text-[10px] px-1.5 py-0.5 rounded bg-orange-500/10 text-orange-500 dark:bg-orange-500/20">{key.rpm} RPM</span>}
-                      {key.rph != null && <span className="text-[10px] px-1.5 py-0.5 rounded bg-orange-500/10 text-orange-500 dark:bg-orange-500/20">{key.rph} RPH</span>}
-                      {key.rpd != null && <span className="text-[10px] px-1.5 py-0.5 rounded bg-orange-500/10 text-orange-500 dark:bg-orange-500/20">{key.rpd} RPD</span>}
-                      {key.maxTokens != null && <span className="text-[10px] px-1.5 py-0.5 rounded bg-cyan-500/10 text-cyan-500 dark:bg-cyan-500/20">max {key.maxTokens.toLocaleString()} tokens</span>}
-                      {key.maxTokensDaily != null && <span className="text-[10px] px-1.5 py-0.5 rounded bg-cyan-500/10 text-cyan-500 dark:bg-cyan-500/20">{key.maxTokensDaily.toLocaleString()} tokens/day</span>}
-                      {key.tokens5h != null && <span className="text-[10px] px-1.5 py-0.5 rounded bg-cyan-500/10 text-cyan-500 dark:bg-cyan-500/20">{key.tokens5h.toLocaleString()} tokens/5h</span>}
-                      {key.tokensWeekly != null && <span className="text-[10px] px-1.5 py-0.5 rounded bg-cyan-500/10 text-cyan-500 dark:bg-cyan-500/20">{key.tokensWeekly.toLocaleString()} tokens/week</span>}
-                      {key.tokensMonthly != null && <span className="text-[10px] px-1.5 py-0.5 rounded bg-cyan-500/10 text-cyan-500 dark:bg-cyan-500/20">{key.tokensMonthly.toLocaleString()} tokens/month</span>}
+                      </div>
+                      <div className="flex items-center gap-2 mt-2">
+                        <code className="text-xs text-text-muted font-mono truncate">
+                          {visibleKeys.has(key.id) ? key.key : maskKey(key.key)}
+                        </code>
+                        <button
+                          onClick={() => toggleKeyVisibility(key.id)}
+                          className="p-1 hover:bg-black/5 dark:hover:bg-white/5 rounded text-text-muted hover:text-primary transition-all"
+                          title={visibleKeys.has(key.id) ? "Hide key" : "Show key"}
+                        >
+                          <span className="material-symbols-outlined text-[14px]">
+                            {visibleKeys.has(key.id) ? "visibility_off" : "visibility"}
+                          </span>
+                        </button>
+                        <button
+                          onClick={() => copy(key.key, key.id)}
+                          className="p-1 hover:bg-black/5 dark:hover:bg-white/5 rounded text-text-muted hover:text-primary transition-all"
+                        >
+                          <span className="material-symbols-outlined text-[14px]">
+                            {copied === key.id ? "check" : "content_copy"}
+                          </span>
+                        </button>
+                      </div>
+                      <p className="text-xs text-text-muted mt-1">
+                        Created {new Date(key.createdAt).toLocaleDateString()}
+                        {key.expiresAt ? ` · Expires ${new Date(key.expiresAt).toLocaleString()}` : " · No expiry"}
+                      </p>
                     </div>
-                  )}
-                </div>
-                <div className="flex items-center gap-2">
-                  {/* Edit ACL button */}
-                  <button
-                    onClick={() => handleOpenEditKey(key)}
-                    className="p-2 hover:bg-primary/10 rounded text-primary opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-all"
-                    title="Edit access control"
-                  >
-                    <span className="material-symbols-outlined text-[18px]">tune</span>
-                  </button>
-                  <Toggle
-                    size="sm"
-                    checked={key.isActive ?? true}
-                    onChange={(checked) => {
-                      if (key.isActive && !checked) {
-                        setConfirmState({
-                          title: "Pause API Key",
-                          message: `Pause API key "${key.name}"?\n\nThis key will stop working immediately but can be resumed later.`,
-                          onConfirm: async () => {
-                            setConfirmState(null);
+                    <div className="flex items-center gap-2 shrink-0">
+                      <button
+                        onClick={() => handleOpenEditKey(key)}
+                        className="p-2 hover:bg-primary/10 rounded text-primary transition-all"
+                        title="Edit access control and limits"
+                      >
+                        <span className="material-symbols-outlined text-[18px]">tune</span>
+                      </button>
+                      <Toggle
+                        size="sm"
+                        checked={key.isActive ?? true}
+                        onChange={(checked) => {
+                          if (key.isActive && !checked) {
+                            setConfirmState({
+                              title: "Pause API Key",
+                              message: `Pause API key "${key.name}"?
+
+This key will stop working immediately but can be resumed later.`,
+                              onConfirm: async () => {
+                                setConfirmState(null);
+                                handleToggleKey(key.id, checked);
+                              }
+                            });
+                          } else {
                             handleToggleKey(key.id, checked);
                           }
-                        });
-                      } else {
-                        handleToggleKey(key.id, checked);
-                      }
-                    }}
-                    title={key.isActive ? "Pause key" : "Resume key"}
-                  />
-                  <button
-                    onClick={() => handleDeleteKey(key.id)}
-                    className="p-2 hover:bg-red-500/10 rounded text-red-500 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-all"
-                  >
-                    <span className="material-symbols-outlined text-[18px]">delete</span>
-                  </button>
+                        }}
+                        title={key.isActive ? "Pause key" : "Resume key"}
+                      />
+                      <button
+                        onClick={() => handleDeleteKey(key.id)}
+                        className="p-2 hover:bg-red-500/10 rounded text-red-500 transition-all"
+                      >
+                        <span className="material-symbols-outlined text-[18px]">delete</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    {metrics.length === 0 ? (
+                      <div className="sm:col-span-2 rounded-xl border border-dashed border-border/70 p-3 text-xs text-text-muted">
+                        No quota limits configured. This key is only gated by active/paused state and ACL rules.
+                      </div>
+                    ) : metrics.map((metric) => (
+                      <div key={metric.id} className="rounded-xl border border-border/40 bg-background/40 p-3">
+                        <div className="flex items-center justify-between gap-2 mb-2">
+                          <span className="text-xs font-medium truncate">{metric.label}</span>
+                          <span className="text-[11px] text-text-muted">
+                            {formatQuotaValue(metric.used)} / {formatQuotaValue(metric.limit)}
+                          </span>
+                        </div>
+                        <div className="h-2 rounded-full bg-border/50 overflow-hidden">
+                          <div
+                            className={`h-full rounded-full ${quotaBarClass(metric.status)}`}
+                            style={{ width: `${Math.min(100, metric.percent || 0)}%` }}
+                          />
+                        </div>
+                        <div className="flex items-center justify-between mt-1 text-[10px] text-text-muted">
+                          <span>{metric.percent ?? 0}% used</span>
+                          <span>{formatQuotaValue(metric.remaining)} left</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
+                  <div className="flex flex-wrap gap-1.5 mt-4">
+                    {key.allowedProviders && <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-500">{key.allowedProviders.length === 0 ? "No providers" : `${key.allowedProviders.length} providers`}</span>}
+                    {key.allowedCombos && <span className="text-[10px] px-1.5 py-0.5 rounded bg-purple-500/10 text-purple-500">{key.allowedCombos.length === 0 ? "No combos" : `${key.allowedCombos.length} combos`}</span>}
+                    {key.allowedKinds && <span className="text-[10px] px-1.5 py-0.5 rounded bg-green-500/10 text-green-500">{key.allowedKinds.length === 0 ? "No kinds" : key.allowedKinds.join(", ")}</span>}
+                    {key.allowedModels && <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-600 dark:text-amber-300">{key.allowedModels.length === 0 ? "No models" : `${key.allowedModels.length} models`}</span>}
+                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </Card>
@@ -2151,67 +1882,6 @@ export default function APIPageClient({ machineId }) {
               {tsLoading ? "Disabling..." : "Disable"}
             </Button>
             <Button onClick={() => setShowDisableTsModal(false)} variant="ghost" fullWidth disabled={tsLoading}>Cancel</Button>
-          </div>
-        </div>
-      </Modal>
-
-      {/* Headroom Install Guide Modal */}
-      <Modal
-        isOpen={showHeadroomInstallModal}
-        title={headroomRunning ? "Headroom" : "Setup Headroom"}
-        onClose={() => setShowHeadroomInstallModal(false)}
-      >
-        <div className="flex flex-col gap-4">
-          <div className="flex items-center justify-between text-sm">
-            <span>Status</span>
-            <span className={headroomRunning ? "text-success" : "text-warning"}>
-              {headroomStatusLabel}
-            </span>
-          </div>
-          <div className="flex flex-col gap-1">
-            <p className="text-sm font-medium">Proxy URL</p>
-            <Input
-              value={headroomUrl}
-              onChange={(e) => setHeadroomUrl(e.target.value)}
-              onBlur={handleHeadroomUrlBlur}
-              placeholder="http://localhost:8787"
-              className="font-mono text-sm"
-            />
-            <p className="text-xs text-text-muted">
-              Use a local proxy for Start/Stop, or an external Docker sidecar like http://headroom:8787.
-            </p>
-          </div>
-          {headroomManaged ? (
-            <Button onClick={handleHeadroomStop} variant="ghost" fullWidth disabled={headroomActionLoading}>
-              {headroomActionLoading ? "Stopping…" : "Stop Headroom"}
-            </Button>
-          ) : headroomRunning ? (
-            <p className="text-sm text-success">Headroom proxy is reachable. You can enable the token saver.</p>
-          ) : headroomCanStart ? (
-            <Button onClick={handleHeadroomStart} fullWidth disabled={headroomActionLoading}>
-              {headroomActionLoading ? "Starting…" : "Start Headroom"}
-            </Button>
-          ) : !headroomLocalUrl ? (
-            <p className="text-sm text-warning">Start Headroom separately at the configured URL, then recheck.</p>
-          ) : !headroomStatus.python ? (
-            <p className="text-sm text-warning">Python ≥ 3.10 required for local managed mode. Install Python first, or use an external proxy URL.</p>
-          ) : (
-            <div className="flex flex-col gap-1">
-              <p className="text-sm font-medium">Install then click Start:</p>
-              <div className="flex items-center gap-2">
-                <pre className="flex-1 rounded bg-black/5 dark:bg-white/5 p-2 text-xs font-mono overflow-x-auto">{`pip install "headroom-ai[proxy]"`}</pre>
-                <Button size="sm" variant="ghost" onClick={() => copy(`pip install "headroom-ai[proxy]"`)}>
-                  {copied ? "Copied" : "Copy"}
-                </Button>
-              </div>
-            </div>
-          )}
-          {headroomActionError && (
-            <p className="text-sm text-warning">{headroomActionError}</p>
-          )}
-          <div className="flex gap-2">
-            <Button onClick={() => refreshHeadroomStatus()} variant="ghost" fullWidth>Recheck</Button>
-            <Button onClick={() => setShowHeadroomInstallModal(false)} fullWidth>Done</Button>
           </div>
         </div>
       </Modal>

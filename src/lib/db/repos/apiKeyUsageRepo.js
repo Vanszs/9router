@@ -58,6 +58,42 @@ function bumpCounter(map, keyId, bucketKey, amount = 1) {
   return entry.count;
 }
 
+
+function getBucketEntry(map, keyId, key) {
+  const entry = map.get(keyId);
+  if (!entry || entry.key !== key) return null;
+  return entry;
+}
+
+function buildMetric(limit, used, label, unit = "") {
+  const hasLimit = limit !== null && limit !== undefined;
+  const safeUsed = Math.max(0, Number(used) || 0);
+  const safeLimit = hasLimit ? Math.max(0, Number(limit) || 0) : null;
+  const percent = hasLimit && safeLimit > 0 ? Math.min(999, Math.round((safeUsed / safeLimit) * 100)) : null;
+  return {
+    label,
+    unit,
+    limit: safeLimit,
+    used: safeUsed,
+    remaining: hasLimit ? Math.max(0, safeLimit - safeUsed) : null,
+    percent,
+    status: !hasLimit ? "unlimited" : percent >= 100 ? "blocked" : percent >= 90 ? "danger" : percent >= 70 ? "warning" : "ok",
+  };
+}
+
+function getExpiryStatus(expiresAt) {
+  if (!expiresAt) return { label: "Expiry", status: "unlimited", expiresAt: null, msRemaining: null };
+  const ts = new Date(expiresAt).getTime();
+  if (!Number.isFinite(ts)) return { label: "Expiry", status: "unknown", expiresAt, msRemaining: null };
+  const msRemaining = ts - Date.now();
+  return {
+    label: "Expiry",
+    status: msRemaining <= 0 ? "blocked" : msRemaining <= 24 * 3600000 ? "danger" : msRemaining <= 7 * 24 * 3600000 ? "warning" : "ok",
+    expiresAt,
+    msRemaining,
+  };
+}
+
 function bumpTokens(map, keyId, amount) {
   let entries = map.get(keyId);
   if (!entries) {
@@ -204,14 +240,35 @@ export function recordApiKeyUsage(apiKeyInfo, tokensUsed = 0) {
 export function getApiKeyUsageSnapshot(apiKeyInfo) {
   if (!apiKeyInfo) return null;
   const keyId = apiKeyInfo.id;
+  const minute = getMinuteTs();
+  const hour = getHourTs();
+  const date = getDateKey();
+  const week = getWeekKey();
+  const month = getMonthKey();
+  const snapshot = {
+    rpm: buildMetric(apiKeyInfo.rpm, getBucketEntry(counters.rpm, keyId, minute)?.count || 0, "Requests / minute", "req"),
+    rph: buildMetric(apiKeyInfo.rph, getBucketEntry(counters.rph, keyId, hour)?.count || 0, "Requests / hour", "req"),
+    rpd: buildMetric(apiKeyInfo.rpd, getBucketEntry(counters.rpd, keyId, date)?.count || 0, "Requests / day", "req"),
+    tokens5h: buildMetric(apiKeyInfo.tokens5h, getRollingTokenCount(counters.tokens5h, keyId, 5 * 3600000), "Tokens / 5h", "tok"),
+    maxTokens: buildMetric(apiKeyInfo.maxTokens, 0, "Max tokens / request", "tok"),
+    maxTokensDaily: buildMetric(apiKeyInfo.maxTokensDaily, getBucketEntry(counters.tokensDaily, keyId, date)?.tokens || 0, "Tokens / day", "tok"),
+    tokensWeekly: buildMetric(apiKeyInfo.tokensWeekly, getBucketEntry(counters.tokensWeekly, keyId, week)?.tokens || 0, "Tokens / week", "tok"),
+    tokensMonthly: buildMetric(apiKeyInfo.tokensMonthly, getBucketEntry(counters.tokensMonthly, keyId, month)?.tokens || 0, "Tokens / month", "tok"),
+    expiry: getExpiryStatus(apiKeyInfo.expiresAt),
+  };
+  const statuses = Object.values(snapshot).map((m) => m?.status).filter(Boolean);
+  const status = apiKeyInfo.isActive === false
+    ? "paused"
+    : statuses.includes("blocked")
+      ? "blocked"
+      : statuses.includes("danger")
+        ? "danger"
+        : statuses.includes("warning")
+          ? "warning"
+          : "ok";
   return {
-    rpm: { limit: apiKeyInfo.rpm, used: (counters.rpm.get(keyId)?.count || 0) },
-    rph: { limit: apiKeyInfo.rph, used: (counters.rph.get(keyId)?.count || 0) },
-    rpd: { limit: apiKeyInfo.rpd, used: (counters.rpd.get(keyId)?.count || 0) },
-    tokens5h: { limit: apiKeyInfo.tokens5h, used: getRollingTokenCount(counters.tokens5h, keyId, 5 * 3600000) },
-    maxTokens: { limit: apiKeyInfo.maxTokens, used: null },
-    maxTokensDaily: { limit: apiKeyInfo.maxTokensDaily, used: (counters.tokensDaily.get(keyId)?.tokens || 0) },
-    tokensWeekly: { limit: apiKeyInfo.tokensWeekly, used: (counters.tokensWeekly.get(keyId)?.tokens || 0) },
-    tokensMonthly: { limit: apiKeyInfo.tokensMonthly, used: (counters.tokensMonthly.get(keyId)?.tokens || 0) },
+    status,
+    checkedAt: new Date().toISOString(),
+    metrics: snapshot,
   };
 }
