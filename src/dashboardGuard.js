@@ -176,9 +176,7 @@ async function canAccessPublicLlmApi(request) {
   if (apiKey) {
     const valid = await validateApiKey(apiKey);
     if (valid) {
-      if (process.env.DEBUG_AUTH) {
-        console.log(`[dashboardGuard] ${pathname} public LLM allowed via API key (host=${host}, keyId=${valid.id?.slice(0, 8)})`);
-      }
+      console.log(`[dashboardGuard] ${pathname} public LLM allowed via API key (host=${host}, keyId=${valid.id?.slice(0, 8)})`);
       return true;
     }
     console.log(`[dashboardGuard] ${pathname} public LLM blocked: API key provided but invalid (host=${host}, masked=${apiKey.slice(0, 8)}...)`);
