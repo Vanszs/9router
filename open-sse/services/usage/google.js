@@ -5,6 +5,7 @@
 import { CLIENT_METADATA } from "../../config/appConstants.js";
 import { ANTIGRAVITY_IDE_USER_AGENT, ANTIGRAVITY_IDE_VERSION, ANTIGRAVITY_OAUTH_CLIENT } from "../../providers/shared.js";
 import { U, parseResetTime, normalizeCloudCodeProjectId, fetchWithTimeout } from "./shared.js";
+import { getWeeklyUsage } from "./antigravityWeeklyTracker.js";
 
 // Antigravity API config (from Quotio) — urls from registry, oauth client + dynamic UA kept here
 const ANTIGRAVITY_CONFIG = {
@@ -61,6 +62,8 @@ export async function getGeminiUsage(accessToken, providerSpecificData, proxyOpt
     }
 
     const data = await response.json();
+    (await import("fs")).writeFileSync("/tmp/ag_dump.json", JSON.stringify(data, null, 2));
+    console.log("DUMP ANTIGRAVITY API: ", JSON.stringify(data, null, 2));
     const quotas = {};
 
     if (Array.isArray(data.buckets)) {
@@ -116,7 +119,7 @@ async function getGeminiSubscriptionInfo(accessToken, proxyOptions = null) {
 /**
  * Antigravity Usage - Fetch quota from Google Cloud Code API
  */
-export async function getAntigravityUsage(accessToken, providerSpecificData, proxyOptions = null) {
+export async function getAntigravityUsage(accessToken, providerSpecificData, proxyOptions = null, connectionId = null) {
   try {
     // Fetch subscription info once — reuse for both projectId and plan
     const subscriptionInfo = await getAntigravitySubscriptionInfo(accessToken, proxyOptions);
@@ -155,6 +158,8 @@ export async function getAntigravityUsage(accessToken, providerSpecificData, pro
     }
 
     const data = await response.json();
+    (await import("fs")).writeFileSync("/tmp/ag_dump.json", JSON.stringify(data, null, 2));
+    console.log("DUMP ANTIGRAVITY API: ", JSON.stringify(data, null, 2));
     const quotas = {};
 
     // Parse model quotas (inspired by vscode-antigravity-cockpit)
@@ -172,6 +177,7 @@ export async function getAntigravityUsage(accessToken, providerSpecificData, pro
         }
       }
 
+      quotas["raw_gemini"] = geminiModel; quotas["raw_claude"] = claudeModel;
       if (geminiModel) {
         const remainingFraction = geminiModel.quotaInfo.remainingFraction || 0;
         const remainingPercentage = remainingFraction * 100;
@@ -204,6 +210,17 @@ export async function getAntigravityUsage(accessToken, providerSpecificData, pro
           unlimited: false,
           displayName: "Claude and GPT models",
         };
+      }
+    }
+
+    // Also attach weekly usage estimates derived from 7-day rolling request history.
+    // Only available when connectionId is provided (dashboard quota refresh path).
+    if (connectionId) {
+      try {
+        const weeklyData = await getWeeklyUsage(connectionId);
+        Object.assign(quotas, weeklyData);
+      } catch (weeklyError) {
+        console.warn("[Antigravity Usage] Weekly data unavailable:", weeklyError.message);
       }
     }
 
