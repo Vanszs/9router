@@ -160,7 +160,15 @@ export function createSSEStream(options = {}) {
           let output;
           let injectedUsage = false;
 
-          if (trimmed.startsWith("data:") && trimmed.slice(5).trim() !== "[DONE]") {
+          // Skip upstream [DONE] — the flush handler emits a single [DONE]
+          // at stream end. Forwarding it here causes a duplicate. Do NOT set
+          // streamDoneSent here: that would suppress the flush handler's own
+          // [DONE] emission, leaving the client with no terminator at all.
+          if (trimmed === "data: [DONE]" || trimmed === "data:[DONE]") {
+            continue;
+          }
+
+          if (trimmed.startsWith("data:")) {
             try {
               const parsed = JSON.parse(trimmed.slice(5).trim());
 
@@ -219,6 +227,19 @@ export function createSSEStream(options = {}) {
                   if (choice.delta?.tool_calls && Array.isArray(choice.delta.tool_calls) && choice.delta.tool_calls.length === 0) {
                     delete choice.delta.tool_calls;
                     fieldsInjected = true;
+                  }
+                  // Strip empty legacy function_call objects that cause client
+                  // loops — some providers (e.g. Shiteru) send a final chunk with
+                  // `function_call: {name: "", arguments: ""}` alongside
+                  // finish_reason: "stop". Clients interpret any function_call
+                  // presence as a pending tool invocation and wait for arguments
+                  // that never arrive, causing an infinite loop.
+                  if (choice.delta?.function_call) {
+                    const fc = choice.delta.function_call;
+                    if ((!fc.name || fc.name === "") && (!fc.arguments || fc.arguments === "")) {
+                      delete choice.delta.function_call;
+                      fieldsInjected = true;
+                    }
                   }
                 }
               }

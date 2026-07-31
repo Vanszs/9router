@@ -106,7 +106,7 @@ function buildTransformStream({ provider, sourceFormat, targetFormat, userAgent,
 export async function handleStreamingResponse({
   providerResponse, provider, model, sourceFormat, targetFormat, userAgent,
   body, stream, translatedBody, finalBody, requestStartTime, connectionId,
-  apiKey, apiKeyInfo, apiKeyName, clientRawRequest, onRequestSuccess,
+  apiKey, apiKeyInfo, apiKeyName, clientModelId, clientRawRequest, onRequestSuccess,
   reqLogger, toolNameMap, streamController, onStreamComplete, streamDetailId, pxpipe,
 }) {
   if (onRequestSuccess) {
