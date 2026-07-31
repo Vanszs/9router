@@ -172,6 +172,11 @@ export default function QuotaTable({
                       <span className={`${nameText} font-medium text-text-primary truncate`}>
                         {quota.name}
                       </span>
+                      {quota.isWeekly && (
+                        <span className="shrink-0 rounded bg-blue-500/10 px-1 py-0.5 text-[9px] font-medium text-blue-600 dark:text-blue-400">
+                          Weekly
+                        </span>
+                      )}
                     </div>
                   </td>
 
@@ -199,7 +204,14 @@ export default function QuotaTable({
 
                   <td className={`${cellPad} w-[25%]`}>
                     {countdown !== "-" || resetDisplay ? (
-                      compact ? (
+                      quota.isWeekly ? (
+                        <div
+                          className={`${resetPrimary} text-text-primary font-medium truncate`}
+                          title={`Next weekly reset: ${resetDisplay || ""}`}
+                        >
+                          ~{countdown !== "-" ? countdown : resetDisplay || "N/A"}
+                        </div>
+                      ) : compact ? (
                         <div
                           className={`${resetPrimary} text-text-primary font-medium truncate`}
                           title={resetDisplay || ""}
