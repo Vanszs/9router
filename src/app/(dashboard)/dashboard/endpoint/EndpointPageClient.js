@@ -577,18 +577,17 @@ export default function APIPageClient({ machineId }) {
         allowedProviders: editProvidersAll ? null : editProviders,
         allowedCombos: editCombosAll ? null : editCombos,
         allowedKinds: editKindsAll ? null : editKinds,
-        allowedModels: editModelsAll ? null : editModels,
         limits: {
-            expiresAt: editExpiresAt ? new Date(editExpiresAt).toISOString() : null,
-            maxTokens: parseNum(editMaxTokens),
-            maxTokensDaily: parseNum(editMaxTokensDaily),
-            rpm: parseNum(editRpm),
-            rph: parseNum(editRph),
-            rpd: parseNum(editRpd),
-            tokens5h: parseNum(editTokens5h),
-            tokensWeekly: parseNum(editTokensWeekly),
-            tokensMonthly: parseNum(editTokensMonthly),
-          },
+          expiresAt: editExpiresAt ? new Date(editExpiresAt).toISOString() : null,
+          maxTokens: parseNum(editMaxTokens),
+          maxTokensDaily: parseNum(editMaxTokensDaily),
+          rpm: parseNum(editRpm),
+          rph: parseNum(editRph),
+          rpd: parseNum(editRpd),
+          tokens5h: parseNum(editTokens5h),
+          tokensWeekly: parseNum(editTokensWeekly),
+          tokensMonthly: parseNum(editTokensMonthly),
+        },
       };
       const res = await fetch(`/api/keys/${editingKey.id}`, {
         method: "PUT",
@@ -1666,19 +1665,14 @@ export default function APIPageClient({ machineId }) {
                           {key.allowedKinds.length === 0 ? "No kinds" : key.allowedKinds.join(", ")}
                         </span>
                       )}
-                        {key.rpm != null && <span className="text-[10px] px-1.5 py-0.5 rounded bg-orange-500/10 text-orange-500 dark:bg-orange-500/20">{key.rpm} RPM</span>}
-                        {key.rph != null && <span className="text-[10px] px-1.5 py-0.5 rounded bg-orange-500/10 text-orange-500 dark:bg-orange-500/20">{key.rph} RPH</span>}
-                        {key.rpd != null && <span className="text-[10px] px-1.5 py-0.5 rounded bg-orange-500/10 text-orange-500 dark:bg-orange-500/20">{key.rpd} RPD</span>}
-                        {key.maxTokens != null && <span className="text-[10px] px-1.5 py-0.5 rounded bg-cyan-500/10 text-cyan-500 dark:bg-cyan-500/20">max {key.maxTokens.toLocaleString()} tokens</span>}
-                        {key.maxTokensDaily != null && <span className="text-[10px] px-1.5 py-0.5 rounded bg-cyan-500/10 text-cyan-500 dark:bg-cyan-500/20">{key.maxTokensDaily.toLocaleString()} tokens/day</span>}
-                        {key.tokens5h != null && <span className="text-[10px] px-1.5 py-0.5 rounded bg-cyan-500/10 text-cyan-500 dark:bg-cyan-500/20">{key.tokens5h.toLocaleString()} tokens/5h</span>}
-                        {key.tokensWeekly != null && <span className="text-[10px] px-1.5 py-0.5 rounded bg-cyan-500/10 text-cyan-500 dark:bg-cyan-500/20">{key.tokensWeekly.toLocaleString()} tokens/week</span>}
-                        {key.tokensMonthly != null && <span className="text-[10px] px-1.5 py-0.5 rounded bg-cyan-500/10 text-cyan-500 dark:bg-cyan-500/20">{key.tokensMonthly.toLocaleString()} tokens/month</span>}
-                        {key.allowedModels && (
-                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-600 dark:bg-amber-500/20 dark:text-amber-300" title={key.allowedModels.join(", ")}>
-                            {key.allowedModels.length === 0 ? "No models" : `${key.allowedModels.length} models`}
-                          </span>
-                        )}
+                      {key.rpm != null && <span className="text-[10px] px-1.5 py-0.5 rounded bg-orange-500/10 text-orange-500 dark:bg-orange-500/20">{key.rpm} RPM</span>}
+                      {key.rph != null && <span className="text-[10px] px-1.5 py-0.5 rounded bg-orange-500/10 text-orange-500 dark:bg-orange-500/20">{key.rph} RPH</span>}
+                      {key.rpd != null && <span className="text-[10px] px-1.5 py-0.5 rounded bg-orange-500/10 text-orange-500 dark:bg-orange-500/20">{key.rpd} RPD</span>}
+                      {key.maxTokens != null && <span className="text-[10px] px-1.5 py-0.5 rounded bg-cyan-500/10 text-cyan-500 dark:bg-cyan-500/20">max {key.maxTokens.toLocaleString()} tokens</span>}
+                      {key.maxTokensDaily != null && <span className="text-[10px] px-1.5 py-0.5 rounded bg-cyan-500/10 text-cyan-500 dark:bg-cyan-500/20">{key.maxTokensDaily.toLocaleString()} tokens/day</span>}
+                      {key.tokens5h != null && <span className="text-[10px] px-1.5 py-0.5 rounded bg-cyan-500/10 text-cyan-500 dark:bg-cyan-500/20">{key.tokens5h.toLocaleString()} tokens/5h</span>}
+                      {key.tokensWeekly != null && <span className="text-[10px] px-1.5 py-0.5 rounded bg-cyan-500/10 text-cyan-500 dark:bg-cyan-500/20">{key.tokensWeekly.toLocaleString()} tokens/week</span>}
+                      {key.tokensMonthly != null && <span className="text-[10px] px-1.5 py-0.5 rounded bg-cyan-500/10 text-cyan-500 dark:bg-cyan-500/20">{key.tokensMonthly.toLocaleString()} tokens/month</span>}
                     </div>
                   )}
                 </div>

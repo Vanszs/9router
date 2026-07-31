@@ -21,7 +21,7 @@ export async function PUT(request, { params }) {
   try {
     const { id } = await params;
     const body = await request.json();
-      const { isActive, name, allowedProviders, allowedCombos, allowedKinds, allowedModels, limits = {} } = body;
+    const { isActive, name, allowedProviders, allowedCombos, allowedKinds, limits = {} } = body;
 
     const existing = await getApiKeyById(id);
     if (!existing) {
@@ -40,9 +40,6 @@ export async function PUT(request, { params }) {
     }
     if ("allowedKinds" in body) {
       updateData.allowedKinds = allowedKinds === null ? null : (Array.isArray(allowedKinds) ? allowedKinds : []);
-    }
-    if ("allowedModels" in body) {
-      updateData.allowedModels = allowedModels === null ? null : (Array.isArray(allowedModels) ? allowedModels : []);
     }
     if ("expiresAt" in limits || "expiresAt" in body) {
       updateData.expiresAt = limits.expiresAt ?? body.expiresAt ?? null;

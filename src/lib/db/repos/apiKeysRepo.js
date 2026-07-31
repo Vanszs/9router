@@ -21,13 +21,6 @@ function parseLimitInt(raw) {
   return Number.isFinite(n) && n >= 0 ? Math.floor(n) : null;
 }
 
-const VALIDATE_CACHE_TTL_MS = 2_000;
-const _validateCache = new Map();
-
-function clearValidateCache() {
-  _validateCache.clear();
-}
-
 function rowToKey(row) {
   if (!row) return null;
   return {
@@ -40,7 +33,6 @@ function rowToKey(row) {
     allowedProviders: parsePermList(row.allowedProviders),
     allowedCombos: parsePermList(row.allowedCombos),
     allowedKinds: parsePermList(row.allowedKinds),
-    allowedModels: parsePermList(row.allowedModels),
     expiresAt: row.expiresAt || null,
     maxTokens: parseLimitInt(row.maxTokens),
     maxTokensDaily: parseLimitInt(row.maxTokensDaily),
@@ -82,7 +74,6 @@ export async function createApiKey(name, machineId, limits = {}) {
     allowedProviders: null,
     allowedCombos: null,
     allowedKinds: null,
-    allowedModels: null,
     expiresAt: limits.expiresAt || null,
     maxTokens: parseLimitInt(limits.maxTokens),
     maxTokensDaily: parseLimitInt(limits.maxTokensDaily),
@@ -96,17 +87,16 @@ export async function createApiKey(name, machineId, limits = {}) {
   db.run(
     `INSERT INTO apiKeys(
       id, key, name, machineId, isActive, createdAt,
-      allowedProviders, allowedCombos, allowedKinds, allowedModels,
+      allowedProviders, allowedCombos, allowedKinds,
       expiresAt, maxTokens, maxTokensDaily, rpm, rph, rpd, tokens5h, tokensWeekly, tokensMonthly
-    ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       apiKey.id, apiKey.key, apiKey.name, apiKey.machineId, 1, apiKey.createdAt,
-      null, null, null, null,
+      null, null, null,
       apiKey.expiresAt, apiKey.maxTokens, apiKey.maxTokensDaily, apiKey.rpm, apiKey.rph, apiKey.rpd,
       apiKey.tokens5h, apiKey.tokensWeekly, apiKey.tokensMonthly,
     ]
   );
-  clearValidateCache();
   return apiKey;
 }
 
@@ -124,7 +114,6 @@ export async function updateApiKey(id, data) {
     if ("allowedProviders" in data) merged.allowedProviders = data.allowedProviders;
     if ("allowedCombos" in data) merged.allowedCombos = data.allowedCombos;
     if ("allowedKinds" in data) merged.allowedKinds = data.allowedKinds;
-    if ("allowedModels" in data) merged.allowedModels = data.allowedModels;
     if ("expiresAt" in data) merged.expiresAt = data.expiresAt || null;
     if ("maxTokens" in data) merged.maxTokens = parseLimitInt(data.maxTokens);
     if ("maxTokensDaily" in data) merged.maxTokensDaily = parseLimitInt(data.maxTokensDaily);
@@ -137,7 +126,7 @@ export async function updateApiKey(id, data) {
 
     db.run(
       `UPDATE apiKeys SET key = ?, name = ?, machineId = ?, isActive = ?,
-        allowedProviders = ?, allowedCombos = ?, allowedKinds = ?, allowedModels = ?,
+        allowedProviders = ?, allowedCombos = ?, allowedKinds = ?,
         expiresAt = ?, maxTokens = ?, maxTokensDaily = ?, rpm = ?, rph = ?, rpd = ?,
         tokens5h = ?, tokensWeekly = ?, tokensMonthly = ?
       WHERE id = ?`,
@@ -149,7 +138,6 @@ export async function updateApiKey(id, data) {
         serializePermList(merged.allowedProviders),
         serializePermList(merged.allowedCombos),
         serializePermList(merged.allowedKinds),
-        serializePermList(merged.allowedModels),
         merged.expiresAt,
         merged.maxTokens,
         merged.maxTokensDaily,
@@ -164,37 +152,23 @@ export async function updateApiKey(id, data) {
     );
     result = merged;
   });
-  clearValidateCache();
   return result;
 }
 
 export async function deleteApiKey(id) {
   const db = await getAdapter();
   const res = db.run(`DELETE FROM apiKeys WHERE id = ?`, [id]);
-  clearValidateCache();
   return (res?.changes ?? 0) > 0;
 }
 
 export async function validateApiKey(key) {
-  const now = Date.now();
-  const cached = _validateCache.get(key);
-  if (cached && cached.expiresAt > now) return cached.value;
-
   const db = await getAdapter();
   const row = db.get(`SELECT * FROM apiKeys WHERE key = ?`, [key]);
-  let value = null;
-  if (row && (row.isActive === 1 || row.isActive === true)) {
-    const apiKey = rowToKey(row);
-    if (apiKey.expiresAt) {
-      const expiry = new Date(apiKey.expiresAt).getTime();
-      value = expiry && expiry <= now ? null : apiKey;
-    } else {
-      value = apiKey;
-    }
+  if (!row || (row.isActive !== 1 && row.isActive !== true)) return null;
+  const apiKey = rowToKey(row);
+  if (apiKey.expiresAt) {
+    const expiry = new Date(apiKey.expiresAt).getTime();
+    if (expiry && expiry <= Date.now()) return null;
   }
-  const cacheExpiresAt = value?.expiresAt
-    ? Math.min(now + VALIDATE_CACHE_TTL_MS, new Date(value.expiresAt).getTime())
-    : now + VALIDATE_CACHE_TTL_MS;
-  _validateCache.set(key, { value, expiresAt: cacheExpiresAt });
-  return value;
+  return apiKey;
 }
