@@ -5,6 +5,12 @@ import os from "os";
 import { execSync, spawn } from "child_process";
 import { savePid, loadPid, clearPid } from "./pid.js";
 import { DATA_DIR } from "@/lib/dataDir.js";
+import {
+  NAMED_TUNNEL_TOKEN,
+  NAMED_TUNNEL_HOSTNAME,
+  NAMED_TUNNEL_CRED_FILE,
+  NAMED_TUNNEL_ID,
+} from "./config.js";
 
 const BIN_DIR = path.join(DATA_DIR, "bin");
 const BINARY_NAME = "cloudflared";
@@ -269,6 +275,161 @@ async function spawnCloudflared(tunnelToken) {
 }
 
 /**
+ * Spawn a NAMED tunnel (custom domain) using either a tunnel token or credentials file.
+ * Requires DNS CNAME <hostname> → <tunnel-id>.cfargotunnel.com (proxied).
+ * Resolves when cloudflared reports "Registered tunnel connection".
+ */
+export async function spawnNamedTunnel(localPort, hostname) {
+  const binaryPath = await ensureCloudflared();
+
+  const configDir = fs.mkdtempSync(path.join(os.tmpdir(), "cloudflared-named-"));
+  const configPath = path.join(configDir, "config.yml");
+
+  // Determine auth mode
+  const useToken = !!NAMED_TUNNEL_TOKEN;
+  const credFile = useToken ? "" : NAMED_TUNNEL_CRED_FILE;
+  const tunnelId = useToken ? NAMED_TUNNEL_TOKEN : (NAMED_TUNNEL_ID || readTunnelIdFromCreds(credFile));
+
+  if (!useToken && !credFile) {
+    throw new Error("Named tunnel requires either TUNNEL_TOKEN or TUNNEL_CRED_FILE (+ TUNNEL_ID)");
+  }
+
+  // Write config file based on auth mode
+  if (useToken) {
+    // Token-based: tunnel = token, no credentials-file needed
+    fs.writeFileSync(
+      configPath,
+      `tunnel: ${NAMED_TUNNEL_TOKEN}\ningress:\n  - hostname: ${hostname}\n    service: http://127.0.0.1:${localPort}\n  - service: http_status:404\n`,
+      "utf8"
+    );
+  } else {
+    // Credentials file mode: tunnel = UUID, credentials-file = path to .json
+    fs.writeFileSync(
+      configPath,
+      `tunnel: ${tunnelId}\ncredentials-file: ${credFile}\ningress:\n  - hostname: ${hostname}\n    service: http://127.0.0.1:${localPort}\n  - service: http_status:404\n`,
+      "utf8"
+    );
+  }
+
+  let isCleaned = false;
+  const cleanup = () => {
+    if (isCleaned) return;
+    isCleaned = true;
+    try {
+      fs.rmSync(configDir, { recursive: true, force: true });
+    } catch (e) { /* ignore */ }
+  };
+
+  const requestedProtocol = String(process.env.TUNNEL_TRANSPORT_PROTOCOL || process.env.CLOUDFLARED_PROTOCOL || DEFAULT_QUICK_TUNNEL_PROTOCOL).trim().toLowerCase();
+  const tunnelProtocol = QUICK_TUNNEL_PROTOCOLS.has(requestedProtocol) ? requestedProtocol : DEFAULT_QUICK_TUNNEL_PROTOCOL;
+
+  // killCloudflared() (called before enable) sets intentionalKill=true to suppress
+  // exit noise from the OLD process. Reset it before spawning the NEW process so a
+  // genuine startup failure surfaces its real error instead of "cloudflared killed".
+  intentionalKill = false;
+
+  // `tunnel run` does NOT support --retries (that flag is for quick tunnels).
+    // Named tunnels reconnect to the edge automatically; the watchdog handles
+    // process-level recovery.
+    // NOTE: --config and --no-autoupdate must come BEFORE the `run` subcommand
+    // (cloudflared parses them as tunnel command options, not run subcommand options).
+    const args = useToken
+      ? ["tunnel", "--config", configPath, "--no-autoupdate", "run", "--token", NAMED_TUNNEL_TOKEN]
+      : ["tunnel", "--config", configPath, "--no-autoupdate", "run", tunnelId];
+
+  const child = spawn(binaryPath, args, {
+    detached: false,
+    windowsHide: true,
+    cwd: os.tmpdir(),
+    env: {
+      ...process.env,
+      TUNNEL_TRANSPORT_PROTOCOL: tunnelProtocol,
+    },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+
+  cloudflaredProcess = child;
+  savePid(child.pid);
+
+  return new Promise((resolve, reject) => {
+    let resolved = false;
+    let connectionCount = 0;
+    let logTail = "";
+
+    const timeout = setTimeout(() => {
+      if (resolved) return;
+      resolved = true;
+      cleanup();
+      reject(new Error(`Named tunnel connection timed out. Last log: ${logTail.slice(-800) || "(empty)"}`));
+    }, 90000);
+
+    const handleLog = (data) => {
+      const msg = data.toString();
+      logTail = (logTail + msg).slice(-4000);
+      const matches = msg.match(/Registered tunnel connection/g);
+      if (matches) {
+        connectionCount += matches.length;
+        if (!resolved && connectionCount >= 4) {
+          resolved = true;
+          clearTimeout(timeout);
+          cleanup();
+          console.log(`[Tunnel] named tunnel registered (${hostname})`);
+          resolve({ child, tunnelUrl: `https://${hostname}` });
+        }
+      }
+    };
+
+    child.stdout.on("data", handleLog);
+    child.stderr.on("data", handleLog);
+
+    child.on("error", (err) => {
+      if (resolved) return;
+      resolved = true;
+      clearTimeout(timeout);
+      cleanup();
+      reject(err);
+    });
+
+    child.on("exit", (code, signal) => {
+      cloudflaredProcess = null;
+      clearPid();
+      if (intentionalKill) {
+        intentionalKill = false;
+        clearTimeout(timeout);
+        cleanup();
+        if (!resolved) { resolved = true; reject(new Error("cloudflared killed")); }
+        return;
+      }
+      console.log(`[Tunnel] named cloudflared exit code=${code} signal=${signal}`);
+      if (!resolved) {
+        resolved = true;
+        clearTimeout(timeout);
+        cleanup();
+        const tail = logTail.slice(-600).trim() || "(empty)";
+        if (code === 1) {
+          reject(new Error(`cloudflared named tunnel exited (code 1). Common causes: (1) invalid tunnel token/credentials, (2) outbound port 7844 (TCP/UDP) blocked, (3) DNS CNAME for ${hostname} not pointing to the tunnel. Last log: ${tail}`));
+        } else {
+          reject(new Error(`cloudflared exited (code ${code}). Last log: ${tail}`));
+        }
+        return;
+      }
+      if (unexpectedExitHandler) unexpectedExitHandler();
+      cleanup();
+    });
+  });
+}
+
+function readTunnelIdFromCreds(credFile) {
+  try {
+    const content = fs.readFileSync(credFile, "utf8");
+    const json = JSON.parse(content);
+    return json.TunnelID || json.TunnelId || "";
+  } catch {
+    return "";
+  }
+}
+
+/**
  * Spawn cloudflared quick tunnel (no account needed)
  * Returns the generated trycloudflare.com URL
  */
@@ -291,6 +452,11 @@ export async function spawnQuickTunnel(localPort, onUrlUpdate) {
 
   const requestedProtocol = String(process.env.TUNNEL_TRANSPORT_PROTOCOL || process.env.CLOUDFLARED_PROTOCOL || DEFAULT_QUICK_TUNNEL_PROTOCOL).trim().toLowerCase();
   const tunnelProtocol = QUICK_TUNNEL_PROTOCOLS.has(requestedProtocol) ? requestedProtocol : DEFAULT_QUICK_TUNNEL_PROTOCOL;
+
+  // Reset intentionalKill (set by a prior killCloudflared()) before spawning the
+  // new process so startup failures surface their real error (see spawnNamedTunnel).
+  intentionalKill = false;
+
   const child = spawn(binaryPath, ["tunnel", "--url", `http://127.0.0.1:${localPort}`, "--config", configPath, "--no-autoupdate", "--retries", "99"], {
     detached: false,
     windowsHide: true,

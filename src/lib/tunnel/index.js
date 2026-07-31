@@ -13,6 +13,7 @@ export {
   isCloudflaredRunning,
   ensureCloudflared,
   getDownloadStatus,
+  spawnNamedTunnel,
 } from "./cloudflare/cloudflared.js";
 export { probeUrlAlive as probeCloudflareAlive } from "./cloudflare/healthCheck.js";
 
