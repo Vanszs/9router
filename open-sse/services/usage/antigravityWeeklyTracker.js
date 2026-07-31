@@ -74,15 +74,18 @@ export async function getWeeklyUsage(connectionId) {
       [connectionId, cutoff],
     );
 
-    // Accumulate request counts per bucket
+    // Accumulate request counts per bucket + track first-use timestamp per
+    // bucket. Antigravity's weekly window starts counting down from the first
+    // request of that bucket (same principle as the 5H window), so each
+    // bucket gets its own weekly reset = firstUse + 7 days.
     const bucketRequests = {
       gemini_weekly: 0,
       claude_gpt_weekly: 0,
     };
-
-    // Track timestamps to determine the observation window
-    let earliestTimestamp = null;
-    let latestTimestamp = null;
+    const bucketFirstUse = {
+      gemini_weekly: null,
+      claude_gpt_weekly: null,
+    };
 
     for (const row of rows) {
       // Skip error rows — they don't consume quota
@@ -93,49 +96,39 @@ export async function getWeeklyUsage(connectionId) {
       if (!bucket) continue;
 
       bucketRequests[bucket] += 1;
-
-      if (!earliestTimestamp || row.timestamp < earliestTimestamp) {
-        earliestTimestamp = row.timestamp;
-      }
-      if (!latestTimestamp || row.timestamp > latestTimestamp) {
-        latestTimestamp = row.timestamp;
+      if (!bucketFirstUse[bucket] || row.timestamp < bucketFirstUse[bucket]) {
+        bucketFirstUse[bucket] = row.timestamp;
       }
     }
 
     // Scale to a full 7-day window if we only observed a partial window.
     // This estimates what usage WOULD look like over the full week.
-    let windowMs = SEVEN_DAYS_MS;
-    if (earliestTimestamp && latestTimestamp) {
-      const actualMs = new Date(latestTimestamp).getTime() - new Date(earliestTimestamp).getTime();
-      if (actualMs > 0 && actualMs < SEVEN_DAYS_MS) {
-        const scale = SEVEN_DAYS_MS / actualMs;
-        for (const key of Object.keys(bucketRequests)) {
-          bucketRequests[key] = Math.round(bucketRequests[key] * scale);
+    let observedAny = Object.values(bucketRequests).some((v) => v > 0);
+    if (observedAny) {
+      const timestamps = [];
+      for (const bucket of Object.keys(bucketRequests)) {
+        if (bucketFirstUse[bucket]) timestamps.push(bucketFirstUse[bucket]);
+      }
+      const earliest = timestamps.length ? new Date(Math.min(...timestamps.map((t) => new Date(t).getTime()))) : null;
+      const latestTs = timestamps.length ? new Date(Math.max(...timestamps.map((t) => new Date(t).getTime()))) : null;
+      if (earliest && latestTs) {
+        const actualMs = latestTs.getTime() - earliest.getTime();
+        if (actualMs > 0 && actualMs < SEVEN_DAYS_MS) {
+          const scale = SEVEN_DAYS_MS / actualMs;
+          for (const key of Object.keys(bucketRequests)) {
+            bucketRequests[key] = Math.round(bucketRequests[key] * scale);
+          }
         }
       }
     }
 
-    // ESTIMATED weekly total per bucket (requests):
-    // The 5H API reports total=1000 requests per window. A week has ~33.6
-    // 5H windows (168h / 5h). So the theoretical weekly max ≈ 33,600.
-    // But the real weekly pool (as shown in the Antigravity app) is smaller
-    // than 7× the 5H pool. Google's actual weekly limits per bucket are
-    // typically 3-5× the 5H window, giving ~3000-5000 requests/week.
+    // Estimated weekly total per bucket (requests). The 5H API reports
+    // total=1000 requests per window; the real weekly pool (shown in the
+    // Antigravity app) is smaller than 7× the 5H pool — typically 3-5×.
     // Use a conservative 4× multiplier = 4000 requests per week.
     const WEEKLY_ESTIMATED_TOTAL = 4000;
 
     const result = {};
-    const now = new Date();
-    // Weekly reset: 7 days from the first recorded request, or 7 days from now
-    let weeklyResetAt = new Date(now.getTime() + SEVEN_DAYS_MS);
-    if (earliestTimestamp) {
-      const firstDate = new Date(earliestTimestamp);
-      weeklyResetAt = new Date(firstDate.getTime() + SEVEN_DAYS_MS);
-      if (weeklyResetAt <= now) {
-        // Already past — show next week
-        weeklyResetAt = new Date(now.getTime() + SEVEN_DAYS_MS);
-      }
-    }
 
     for (const [bucketKey, displayName] of [
       ["gemini_weekly", "Gemini Models"],
@@ -147,10 +140,17 @@ export async function getWeeklyUsage(connectionId) {
         ? Math.max(0, Math.round(((total - used) / total) * 100))
         : 100;
 
+      // Per-bucket weekly reset: first use of this bucket + 7 days.
+      // If the bucket hasn't been used yet, show a full 7d window from now.
+      const firstUseMs = bucketFirstUse[bucketKey]
+        ? new Date(bucketFirstUse[bucketKey]).getTime()
+        : Date.now();
+      const resetAt = new Date(firstUseMs + SEVEN_DAYS_MS).toISOString();
+
       result[bucketKey] = {
         used,
         total,
-        resetAt: weeklyResetAt.toISOString(),
+        resetAt,
         remainingPercentage,
         unlimited: false,
         displayName,

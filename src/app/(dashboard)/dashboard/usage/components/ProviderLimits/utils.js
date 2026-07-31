@@ -359,6 +359,10 @@ export function parseQuotaData(provider, data) {
       case "antigravity":
         if (data.quotas) {
           Object.entries(data.quotas).forEach(([modelKey, quota]) => {
+            // Skip internal raw model payloads — they are debugging artifacts
+            // (raw_gemini / raw_claude hold the full nested model objects, not
+            // normalized quota rows) and would render as misleading 0/∞ rows.
+            if (modelKey.startsWith("raw_")) return;
             normalizedQuotas.push({
               name: quota.displayName || modelKey,
               modelKey: modelKey, // Keep modelKey for sorting
