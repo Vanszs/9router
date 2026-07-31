@@ -1,22 +1,24 @@
 import { NextResponse } from "next/server";
-import { getComboById, updateCombo, deleteCombo, getComboByName, getComboByAlias } from "@/lib/localDb";
+import { getComboById, updateCombo, deleteCombo, getComboByName } from "@/lib/localDb";
 import { resetComboRotation } from "open-sse/services/combo.js";
 import { invalidateAllowedModelsCache } from "@/sse/services/allowedModels.js";
-import { COMBO_NAME_REGEX, COMBO_NAME_HINT, COMBO_ALIAS_HINT } from "@/shared/constants/comboValidation.js";
+
+// Validate combo name: only a-z, A-Z, 0-9, -, _
+const VALID_NAME_REGEX = /^[a-zA-Z0-9_.\-]+$/;
 
 // GET /api/combos/[id] - Get combo by ID
 export async function GET(request, { params }) {
   try {
     const { id } = await params;
     const combo = await getComboById(id);
-
+    
     if (!combo) {
       return NextResponse.json({ error: "Combo not found" }, { status: 404 });
     }
-
+    
     return NextResponse.json(combo);
   } catch (error) {
-    console.error("Error fetching combo:", error);
+    console.log("Error fetching combo:", error);
     return NextResponse.json({ error: "Failed to fetch combo" }, { status: 500 });
   }
 }
@@ -26,38 +28,24 @@ export async function PUT(request, { params }) {
   try {
     const { id } = await params;
     const body = await request.json();
-
+    
     // Validate name format if provided
     if (body.name) {
-      if (!COMBO_NAME_REGEX.test(body.name)) {
-        return NextResponse.json({ error: COMBO_NAME_HINT }, { status: 400 });
+      if (!VALID_NAME_REGEX.test(body.name)) {
+        return NextResponse.json({ error: "Name can only contain letters, numbers, -, _ and ." }, { status: 400 });
       }
-
+      
       // Check if name already exists (exclude current combo)
       const existing = await getComboByName(body.name);
       if (existing && existing.id !== id) {
         return NextResponse.json({ error: "Combo name already exists" }, { status: 400 });
       }
     }
-
-    // Validate alias format if provided
-    const cleanAlias = body.alias != null ? String(body.alias).trim() || null : undefined;
-    if (cleanAlias !== undefined && cleanAlias && !COMBO_NAME_REGEX.test(cleanAlias)) {
-      return NextResponse.json({ error: COMBO_ALIAS_HINT }, { status: 400 });
-    }
-    // Check if alias already taken by another combo
-    if (cleanAlias) {
-      const aliasOwner = await getComboByAlias(cleanAlias);
-      if (aliasOwner && aliasOwner.id !== id) {
-        return NextResponse.json({ error: `Alias "${cleanAlias}" already used by combo "${aliasOwner.name}"` }, { status: 409 });
-      }
-    }
-    if (cleanAlias !== undefined) body.alias = cleanAlias;
-
+    
     // Capture previous name to invalidate rotation state on rename
     const prev = await getComboById(id);
     const combo = await updateCombo(id, body);
-
+    
     if (!combo) {
       return NextResponse.json({ error: "Combo not found" }, { status: 404 });
     }
@@ -69,7 +57,7 @@ export async function PUT(request, { params }) {
 
     return NextResponse.json(combo);
   } catch (error) {
-    console.error("Error updating combo:", error);
+    console.log("Error updating combo:", error);
     return NextResponse.json({ error: "Failed to update combo" }, { status: 500 });
   }
 }
@@ -82,17 +70,17 @@ export async function DELETE(request, { params }) {
       getComboById(id),
       deleteCombo(id),
     ]);
-
+    
     if (!success) {
       return NextResponse.json({ error: "Combo not found" }, { status: 404 });
     }
 
     if (prev?.name) resetComboRotation(prev.name);
     invalidateAllowedModelsCache();
-
+    
     return NextResponse.json({ success: true });
   } catch (error) {
-    console.error("Error deleting combo:", error);
+    console.log("Error deleting combo:", error);
     return NextResponse.json({ error: "Failed to delete combo" }, { status: 500 });
   }
 }
