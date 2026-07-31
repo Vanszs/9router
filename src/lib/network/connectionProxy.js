@@ -187,53 +187,56 @@ export function getProxyHash(providerSpecificData = {}) {
   return "direct";
 }
 
-// In-memory counters for round-robin / fill-first proxy pool rotation.
-// Keyed by `${providerId}:${strategy}:${poolIds}` so different providers,
-// strategies, and selected pool subsets keep independent cursors.
-const _poolCursors = new Map();
+/**
+ * ---------------------------------------------------------------------------
+ * Proxy Rotation Strategy
+ * ---------------------------------------------------------------------------
+ *
+ * Module-level state tracking for round-robin rotation.
+ * Maps providerId -> { currentIndex, poolHash }
+ * When the pool list changes (pools added/removed), the hash changes and the
+ * cursor resets automatically.
+ */
 
-function normalizeTargetPoolIds(targetProxyPoolIds) {
-  if (!Array.isArray(targetProxyPoolIds)) return [];
-  return [...new Set(targetProxyPoolIds.map(normalizeString).filter(Boolean))];
-}
+const _roundRobinState = new Map();
 
-export function filterTargetProxyPoolIds(poolIds, targetProxyPoolIds = []) {
-  if (!Array.isArray(poolIds) || poolIds.length === 0) return [];
-  const targets = normalizeTargetPoolIds(targetProxyPoolIds);
-  if (targets.length === 0) return poolIds;
-  const allowed = new Set(targets);
-  return poolIds.filter((id) => allowed.has(id));
+function computePoolHash(poolIds) {
+  return [...poolIds].sort().join(",");
 }
 
 /**
- * Pick a proxy pool id from active pool ids using the configured strategy.
- * Empty targetProxyPoolIds means all active pools. Non-empty targets filter the
- * rotation subset; if every target is inactive/missing, returns null so callers
- * can fall back safely instead of silently using an unselected pool.
+ * Pick a proxy pool ID from the available pool list using the configured
+ * rotation strategy.
  *
- * @param {string[]} poolIds active proxy pool ids with a proxyUrl
- * @param {string} strategy rotation strategy from providerStrategies override
- * @param {string} providerId provider id for per-provider cursor isolation
- * @param {string[]} targetProxyPoolIds optional selected subset
- * @returns {string|null} chosen pool id, or null when pool/subset is empty
+ * @param {string[]} poolIds    - Active proxy pool IDs to choose from.
+ * @param {string}   strategy   - "random" or "round-robin".
+ * @param {string}   providerId - Provider identifier (state key, each
+ *                                provider rotates independently).
+ * @returns {string|null} Selected proxy pool ID, or null if poolIds empty.
  */
-export function pickProxyPoolId(poolIds, strategy, providerId = "", targetProxyPoolIds = []) {
-  const eligiblePoolIds = filterTargetProxyPoolIds(poolIds, targetProxyPoolIds);
-  if (eligiblePoolIds.length === 0) return null;
-  const strat = String(strategy || "").toLowerCase();
+export function pickProxyPoolId(poolIds, strategy, providerId) {
+  if (!Array.isArray(poolIds) || poolIds.length === 0) return null;
 
-  if (strat === "fill-first") return eligiblePoolIds[0];
-
-  if (strat === "round-robin") {
-    const key = `${providerId}:${strat}:${eligiblePoolIds.join(",")}`;
-    const idx = (_poolCursors.get(key) ?? 0) % eligiblePoolIds.length;
-    _poolCursors.set(key, (idx + 1) % eligiblePoolIds.length);
-    return eligiblePoolIds[idx];
+  if (strategy === "random") {
+    const idx = Math.floor(Math.random() * poolIds.length);
+    return poolIds[idx];
   }
 
-  if (strat === "random") {
-    return eligiblePoolIds[Math.floor(Math.random() * eligiblePoolIds.length)];
+  if (strategy === "round-robin") {
+    const currentHash = computePoolHash(poolIds);
+    const prev = _roundRobinState.get(providerId);
+
+    // Reset cursor when pool composition changes (pools added/removed)
+    if (!prev || prev.poolHash !== currentHash) {
+      _roundRobinState.set(providerId, { currentIndex: 0, poolHash: currentHash });
+      return poolIds[0];
+    }
+
+    const nextIndex = (prev.currentIndex + 1) % poolIds.length;
+    _roundRobinState.set(providerId, { currentIndex: nextIndex, poolHash: currentHash });
+    return poolIds[nextIndex];
   }
 
-  return null;
+  // Unknown strategy — fall back to first pool
+  return poolIds[0];
 }

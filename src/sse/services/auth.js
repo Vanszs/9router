@@ -55,9 +55,7 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
       if (strategy !== "none") {
         const allPools = await getProxyPools({ isActive: true });
         const poolIds = allPools.filter(p => p.proxyUrl).map(p => p.id);
-        pickedId = pickProxyPoolId(poolIds, strategy, providerId, override.targetProxyPoolIds);
-        const targetCount = Array.isArray(override.targetProxyPoolIds) ? override.targetProxyPoolIds.length : 0;
-        log.info("PROXY", `${providerId.toUpperCase()} | no-auth ${strategy} | pool=${pickedId || "none"} | targets=${targetCount || "all"}/${poolIds.length}`);
+        pickedId = pickProxyPoolId(poolIds, strategy, providerId);
       }
       const resolvedProxy = await resolveConnectionProxyConfig({ proxyPoolId: pickedId || "" });
       return {
@@ -189,9 +187,7 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
       const allPools = await getProxyPools({ isActive: true });
       const poolIds = allPools.filter(p => p.proxyUrl).map(p => p.id);
       if (poolIds.length > 0) {
-        rotProxyPoolId = pickProxyPoolId(poolIds, proxyStrategy, providerId, proxyOverride.targetProxyPoolIds);
-        const targetCount = Array.isArray(proxyOverride.targetProxyPoolIds) ? proxyOverride.targetProxyPoolIds.length : 0;
-        log.info("PROXY", `${providerId.toUpperCase()} | ${model || "any"} | strategy=${proxyStrategy} | conn=${connection.displayName || connection.name || connection.email || connection.id} | pool=${rotProxyPoolId || "none"} | targets=${targetCount || "all"}/${poolIds.length}`);
+        rotProxyPoolId = pickProxyPoolId(poolIds, proxyStrategy, providerId);
       }
     }
     const resolvedProxy = await resolveConnectionProxyConfig({
@@ -408,10 +404,7 @@ export async function isProviderAllowed(apiKeyInfo, providerIdOrAlias) {
   if (!apiKeyInfo) return true;
   const allowed = apiKeyInfo.allowedProviders;
   if (allowed === null || allowed === undefined) return true; // null = all
-  if (!Array.isArray(allowed) || allowed.length === 0) {
-    log.warn("AUTH", `Provider "${providerIdOrAlias}" blocked for key ${apiKeyInfo.id?.slice(0, 8)}: allowedProviders is empty`);
-    return false; // [] = none
-  }
+  if (!Array.isArray(allowed) || allowed.length === 0) return false; // [] = none
   if (allowed.includes(providerIdOrAlias)) return true;
   const alias = getProviderAlias(providerIdOrAlias);
   if (alias !== providerIdOrAlias && allowed.includes(alias)) return true;
@@ -421,7 +414,6 @@ export async function isProviderAllowed(apiKeyInfo, providerIdOrAlias) {
     const prefix = await getNodePrefix(providerIdOrAlias);
     if (prefix && allowed.includes(prefix)) return true;
   }
-  log.warn("AUTH", `Provider "${providerIdOrAlias}" blocked for key ${apiKeyInfo.id?.slice(0, 8)}: allowed=[${allowed.join(", ")}]`);
   return false;
 }
 
@@ -434,15 +426,8 @@ export function isComboAllowed(apiKeyInfo, comboName) {
   const name = comboName.startsWith("combo/") ? comboName.slice(6) : comboName;
   const allowed = apiKeyInfo.allowedCombos;
   if (allowed === null || allowed === undefined) return true;
-  if (!Array.isArray(allowed) || allowed.length === 0) {
-    log.warn("AUTH", `Combo "${name}" blocked for key ${apiKeyInfo.id?.slice(0, 8)}: allowedCombos is empty`);
-    return false;
-  }
-  const ok = allowed.includes(name);
-  if (!ok) {
-    log.warn("AUTH", `Combo "${name}" blocked for key ${apiKeyInfo.id?.slice(0, 8)}: allowed=[${allowed.join(", ")}]`);
-  }
-  return ok;
+  if (!Array.isArray(allowed) || allowed.length === 0) return false;
+  return allowed.includes(name);
 }
 
 /**
@@ -454,14 +439,7 @@ export function isKindAllowed(apiKeyInfo, kind) {
   if (!apiKeyInfo) return true;
   const allowed = apiKeyInfo.allowedKinds;
   if (allowed === null || allowed === undefined) return true; // null = all
-  if (!Array.isArray(allowed) || allowed.length === 0) {
-    log.warn("AUTH", `Kind "${kind}" blocked for key ${apiKeyInfo.id?.slice(0, 8)}: allowedKinds is empty`);
-    return false; // [] = none
-  }
-  const ok = allowed.includes(kind);
-  if (!ok) {
-    log.warn("AUTH", `Kind "${kind}" blocked for key ${apiKeyInfo.id?.slice(0, 8)}: allowed=[${allowed.join(", ")}]`);
-  }
-  return ok;
+  if (!Array.isArray(allowed) || allowed.length === 0) return false; // [] = none
+  return allowed.includes(kind);
 }
 
