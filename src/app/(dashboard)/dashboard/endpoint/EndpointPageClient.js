@@ -448,8 +448,10 @@ export default function APIPageClient({ machineId }) {
   // ── ACL Edit Key handlers ──────────────────────────────────────────
   const ALL_KINDS = ["llm", "embedding", "image", "tts", "stt", "webSearch", "webFetch"];
 
-  // Build unique provider list grouped from connections + nodes
-  const buildProviderList = (connections, nodes) => {
+  // Build unique provider list grouped from connections + nodes, then merge in
+  // all registered providers (including free/noAuth ones like opencode that
+  // may have no connection yet) so the ACL dialog can grant access to them.
+  const buildProviderList = (connections, nodes, registered = []) => {
     const nodeMap = {};
     for (const n of (nodes || [])) {
       // API returns prefix/apiType/baseUrl as top-level fields (parsed from data JSON)
@@ -462,10 +464,19 @@ export default function APIPageClient({ machineId }) {
       if (!byProvider[p]) byProvider[p] = { id: p, count: 0, alias: c.alias || null };
       byProvider[p].count++;
     }
+    // Include registered providers with no connection (free/noAuth), count 0.
+    for (const r of (registered || [])) {
+      if (!byProvider[r.id]) {
+        byProvider[r.id] = { id: r.id, count: 0, alias: r.alias || null };
+      }
+    }
     // Build final list with friendly names
+    const regById = {};
+    for (const r of (registered || [])) regById[r.id] = r;
     return Object.values(byProvider).map(({ id, count, alias }) => {
       const node = nodeMap[id];
-      let displayName = id;
+      const rp = regById[id];
+      let displayName = rp?.displayName || id;
       let prefix = null;
       if (node) {
         displayName = node.name || id;
@@ -563,16 +574,18 @@ export default function APIPageClient({ machineId }) {
       }
       let connections = [];
       let nodes = [];
+      let registered = [];
       if (providersRes.ok) {
         const pData = await providersRes.json();
         connections = pData.connections || [];
         if (pData.aliasMap) setAliasMap(pData.aliasMap);
+        registered = pData.providers || [];
       }
       if (nodesRes.ok) {
         const nData = await nodesRes.json();
         nodes = nData.nodes || [];
       }
-      setProviderList(buildProviderList(connections, nodes));
+      setProviderList(buildProviderList(connections, nodes, registered));
       if (combosRes.ok) {
         const cData = await combosRes.json();
         setComboList(cData.combos || []);
