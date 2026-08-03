@@ -168,7 +168,28 @@ export async function fetchModelsFetcherIds(providerId, providerInfo) {
     if (!response.ok) return [];
 
     const data = await response.json();
-    const rawModels = Array.isArray(data) ? data : (data?.data || data?.models || data?.results || []);
+    let rawModels;
+    if (Array.isArray(data)) {
+      rawModels = data;
+    } else if (Array.isArray(data?.data)) {
+      rawModels = data.data;
+    } else if (typeof data?.models === "object" && data.models !== null && !Array.isArray(data.models)) {
+      // { provider: { models: { modelId: {...} } } }
+      rawModels = Object.values(data.models);
+    } else if (
+      data &&
+      typeof data === "object" &&
+      !Array.isArray(data) &&
+      typeof Object.values(data)[0]?.models === "object" &&
+      Object.values(data)[0].models !== null &&
+      !Array.isArray(Object.values(data)[0].models)
+    ) {
+      // models.dev top-level shape: { provider: { models: { modelId: {...} } } }
+      // (some fetchers like opencode's models.dev return the provider entry directly)
+      rawModels = Object.values(Object.values(data)[0].models);
+    } else {
+      rawModels = data?.models || data?.results || [];
+    }
 
     let ids;
     if (fetcher.type === "opencode-free") {
