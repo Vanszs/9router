@@ -2,8 +2,9 @@ import { NextResponse } from "next/server";
 import { getModelAliases, setModelAlias } from "@/models";
 import { getDisabledModels } from "@/lib/disabledModelsDb";
 import { AI_MODELS } from "@/shared/constants/config";
-import { getProviderAlias } from "@/shared/constants/providers";
+import { AI_PROVIDERS, getProviderAlias } from "@/shared/constants/providers";
 import { getCapabilitiesForModel } from "open-sse/providers/capabilities.js";
+import { fetchModelsFetcherIds } from "@/sse/services/allowedModels.js";
 
 // GET /api/models - Get models with aliases
 export async function GET() {
@@ -37,7 +38,30 @@ export async function GET() {
         };
       });
 
-    return NextResponse.json({ models });
+    // Include dynamic fetcher models for noAuth/passthrough providers (e.g. opencode)
+    // so the ACL dialog can list models for providers whose catalog is not static.
+    let extra = [];
+    for (const [providerId, providerInfo] of Object.entries(AI_PROVIDERS)) {
+      if (!providerInfo?.noAuth || !providerInfo?.modelsFetcher) continue;
+      const fetcherIds = await fetchModelsFetcherIds(providerId, providerInfo);
+      if (!fetcherIds.length) continue;
+      const providerAlias = getProviderAlias(providerId) || providerInfo.alias || providerId;
+      for (const modelId of fetcherIds) {
+        const fullModel = `${providerId}/${modelId}`;
+        if (models.some((m) => m.fullModel === fullModel)) continue;
+        extra.push({
+          provider: providerAlias,
+          model: modelId,
+          name: modelId,
+          fullModel,
+          routedModel: `${providerAlias}/${modelId}`,
+          alias: modelId,
+          caps: {},
+        });
+      }
+    }
+
+    return NextResponse.json({ models: [...models, ...extra] });
   } catch (error) {
     console.log("Error fetching models:", error);
     return NextResponse.json({ error: "Failed to fetch models" }, { status: 500 });
