@@ -217,7 +217,7 @@ export function translateNonStreamingResponse(responseBody, targetFormat, source
 /**
  * Handle non-streaming response from provider.
  */
-export async function handleNonStreamingResponse({ providerResponse, provider, model, sourceFormat, targetFormat, body, stream, translatedBody, finalBody, requestStartTime, connectionId, apiKey, apiKeyName, clientRawRequest, onRequestSuccess, reqLogger, toolNameMap, trackDone, appendLog, pxpipe, comboName }) {
+export async function handleNonStreamingResponse({ providerResponse, provider, model, sourceFormat, targetFormat, body, stream, translatedBody, finalBody, requestStartTime, connectionId, apiKey, apiKeyInfo, apiKeyName, clientModelId, clientRawRequest, onRequestSuccess, reqLogger, toolNameMap, trackDone, appendLog, pxpipe, comboName }) {
   trackDone();
   const contentType = providerResponse.headers.get("content-type") || "";
   let responseBody;
@@ -264,7 +264,7 @@ export async function handleNonStreamingResponse({ providerResponse, provider, m
 
   const usage = extractUsageFromResponse(responseBody);
   appendLog({ tokens: usage, status: "200 OK" });
-  saveUsageStats({ provider, model, tokens: usage, connectionId, apiKey, endpoint: clientRawRequest?.endpoint, comboName });
+  saveUsageStats({ provider, model, tokens: usage, connectionId, apiKey, apiKeyInfo, endpoint: clientRawRequest?.endpoint, comboName });
 
   const translatedResponse = needsTranslation(targetFormat, sourceFormat)
     ? translateNonStreamingResponse(responseBody, targetFormat, sourceFormat)
@@ -322,11 +322,18 @@ export async function handleNonStreamingResponse({ providerResponse, provider, m
       translatedResponse.usage = filterUsageForFormat(addBufferToUsage(translatedResponse.usage), sourceFormat);
     }
 
-    // Strip reasoning_content when content is non-empty.
-    // When content is empty (e.g. thinking models that used all tokens for reasoning),
-    // reasoning_content is the only useful output and must be preserved.
-    // Also strip provider_specific_fields.reasoning_content (Kimchi puts it there).
-    if (translatedResponse?.choices) {
+    // Reasoning privacy guard: by default, strip reasoning_content/thinking
+    // fields when a final answer is also present, so reasoning is NOT exposed
+    // globally. Only keep reasoning output when the client explicitly requested
+    // it (reasoning_effort or a thinking/thoughts request on the body). NVIDIA
+    // NIM / DeepSeek / Kimi / Qwen return both the chain-of-thought and the
+    // final answer; the Thinking control only works when the client opts in.
+    const requestedReasoning = !!(body?.reasoning_effort
+      || body?.thinking?.type
+      || body?.reasoning
+      || body?.config?.thinking?.thinkingBudget
+      || body?.reasoning_config);
+    if (translatedResponse?.choices && !requestedReasoning) {
       for (const choice of translatedResponse.choices) {
         const msg = choice?.message;
         if (!msg) continue;
@@ -378,6 +385,13 @@ export async function handleNonStreamingResponse({ providerResponse, provider, m
   }, { endpoint: clientRawRequest?.endpoint || null })).catch(err => {
     console.error("[RequestDetail] Failed to save:", err.message);
   });
+
+  // Echo the client-facing model id (original alias or provider/model string)
+  // rather than the upstream provider's modelVersion. ponytail: overwrite only
+  // when clientModelId is present; otherwise the translator's value stands.
+  if (clientModelId && finalResponse && typeof finalResponse === "object" && !Array.isArray(finalResponse)) {
+    finalResponse.model = clientModelId;
+  }
 
   return {
     success: true,
