@@ -85,10 +85,40 @@ const LOCAL_ONLY_PATHS = [
 
 const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "::1"]);
 
+// Hostnames explicitly trusted for public LLM API access (e.g. Cloudflare tunnel domain).
+// Comma-separated list from env; entries may include port.
+function getTrustedPublicApiHosts() {
+  const raw = process.env.PUBLIC_API_HOSTS || "";
+  return new Set(
+    raw
+      .split(",")
+      .map((h) => h.trim().toLowerCase())
+      .filter(Boolean)
+  );
+}
+
+function normalizeHostname(h) {
+  if (!h) return "";
+  const lower = String(h).toLowerCase().trim();
+  // Bracketed IPv6: [::1]:20128 → ::1
+  const bracketMatch = lower.match(/^\[([^\]]+)\]/);
+  if (bracketMatch) return bracketMatch[1];
+  // Unbracketed IPv6 (::1) — return as-is (no port concept).
+  if (lower.includes(":") && lower.split(":").length > 2) return lower;
+  // host:port → host
+  return lower.split(":")[0];
+}
+
 function isLoopbackHostname(h) {
   if (!h) return false;
-  const name = h.split(":")[0].replace(/^\[|\]$/g, "").toLowerCase();
+  const name = normalizeHostname(h);
   return LOOPBACK_HOSTS.has(name);
+}
+
+function isTrustedPublicApiHost(h) {
+  if (!h) return false;
+  const name = normalizeHostname(h);
+  return getTrustedPublicApiHosts().has(name);
 }
 
 export function isLocalRequest(request) {
@@ -133,9 +163,34 @@ async function hasValidApiKey(request) {
 }
 
 async function canAccessPublicLlmApi(request) {
-  if (isLocalRequest(request)) return true;
-  if (await hasValidCliToken(request)) return true;
-  if (await hasValidApiKey(request)) return true;
+  const host = request.headers.get("host") || "";
+  const pathname = request.nextUrl.pathname;
+  const isTrustedHost = isTrustedPublicApiHost(host);
+  const local = isLocalRequest(request);
+
+  // Loopback is fully trusted (the operator's own machine / local daemon).
+  if (local) {
+    if (process.env.DEBUG_AUTH) {
+      console.log(`[dashboardGuard] ${pathname} public LLM allowed (local=true, host=${host})`);
+    }
+    return true;
+  }
+  // Trusted public hostname does NOT bypass API-key auth — it only removes the
+  // local-origin requirement. The request must still be authorized via a valid
+  // API key (or the explicit allowRemoteNoApiKey opt-in below).
+  if (await hasValidCliToken(request)) {
+    console.log(`[dashboardGuard] ${pathname} public LLM allowed via CLI token (host=${host})`);
+    return true;
+  }
+  const apiKey = extractApiKey(request);
+  if (apiKey) {
+    const valid = await validateApiKey(apiKey);
+    if (valid) {
+      console.log(`[dashboardGuard] ${pathname} public LLM allowed via API key (host=${host}, keyId=${valid.id?.slice(0, 8)})`);
+      return true;
+    }
+    console.log(`[dashboardGuard] ${pathname} public LLM blocked: API key provided but invalid (host=${host}, masked=${apiKey.slice(0, 8)}...)`);
+  }
   // Explicit opt-in: allow anonymous (no API key) remote access ONLY when the
   // operator both disabled API-key enforcement AND turned on open remote access.
   // If requireApiKey is on, the downstream handler would reject a keyless request
@@ -145,6 +200,7 @@ async function canAccessPublicLlmApi(request) {
   if (settings && settings.requireApiKey !== true && settings.allowRemoteNoApiKey === true) {
     return true;
   }
+  console.log(`[dashboardGuard] ${pathname} public LLM blocked: remote API key required (host=${host}, requireApiKey=${settings?.requireApiKey}, allowRemoteNoApiKey=${settings?.allowRemoteNoApiKey})`);
   return false;
 }
 
@@ -186,6 +242,9 @@ export const __test__ = {
   extractApiKey,
   canAccessPublicLlmApi,
   canAccessLocalOnlyRoute,
+  isTrustedPublicApiHost,
+  normalizeHostname,
+  canAccessPublicLlmApiDirect: canAccessPublicLlmApi,
 };
 
 export async function proxy(request) {
@@ -194,6 +253,9 @@ export async function proxy(request) {
   // Local-only gate for spawn-capable / host-secret routes.
   if (LOCAL_ONLY_PATHS.some((p) => pathname.startsWith(p))) {
     if (!(await canAccessLocalOnlyRoute(request))) {
+      const host = request.headers.get("host") || "";
+      const ip = request.headers.get("x-9r-real-ip") || "unknown";
+      console.log(`[dashboardGuard] ${pathname} blocked: local-only route (host=${host}, ip=${ip})`);
       return NextResponse.json({ error: "Local only: CLI token required" }, { status: 403 });
     }
   }
@@ -207,7 +269,10 @@ export async function proxy(request) {
 
   if (isPublicLlmApi(pathname)) {
     if (await canAccessPublicLlmApi(request)) return NextResponse.next();
-    return NextResponse.json({ error: "API key required for remote API access" }, { status: 401 });
+    return NextResponse.json(
+      { error: "API key required for remote API access" },
+      { status: 401, headers: { "Access-Control-Allow-Origin": "*" } }
+    );
   }
 
   // Deny-by-default for /api/* — public allow-list bypasses, everything else requires auth.
@@ -215,6 +280,7 @@ export async function proxy(request) {
     if (isPublicApi(pathname)) return NextResponse.next();
     if (await hasValidCliToken(request) || await isAuthenticated(request))
       return NextResponse.next();
+    console.log(`[dashboardGuard] ${pathname} blocked: not authenticated (host=${request.headers.get("host") || ""})`);
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
