@@ -76,10 +76,42 @@ export function parseSSEToOpenAIResponse(rawSSE, fallbackModel, validToolNames =
   for (const chunk of chunks) {
     const choice = chunk?.choices?.[0];
     const delta = choice?.delta || {};
+
+    // OpenAI format: content in delta + usage at chunk root
     if (typeof delta.content === "string" && delta.content.length > 0) contentParts.push(delta.content);
     if (typeof delta.reasoning_content === "string" && delta.reasoning_content.length > 0) reasoningParts.push(delta.reasoning_content);
     if (choice?.finish_reason) finishReason = choice.finish_reason;
     if (chunk?.usage && typeof chunk.usage === "object") usage = chunk.usage;
+
+    // Gemini / Antigravity format: content in response.candidates[*].content.parts
+    // and usageMetadata inside response envelope
+    //    data: {"response":{"candidates":[{...}],"usageMetadata":{"promptTokenCount":...,...}}}
+    if (!choice && chunk.response) {
+      const resp = chunk.response;
+      const candidate = resp.candidates?.[0];
+      if (candidate) {
+        const parts = candidate.content?.parts || [];
+        for (const part of parts) {
+          if (part.text !== undefined && part.text) contentParts.push(part.text);
+          if (part.thought && part.text) reasoningParts.push(part.text);
+        }
+        if (candidate.finishReason) finishReason = candidate.finishReason.toLowerCase();
+      }
+      // Extract usage from Gemini AG envelope
+      const usageMeta = resp.usageMetadata || chunk.usageMetadata;
+      if (usageMeta && !usage) {
+        const prompt = usageMeta.promptTokenCount || 0;
+        const completion = usageMeta.candidatesTokenCount || 0;
+        usage = {
+          prompt_tokens: prompt,
+          completion_tokens: completion,
+          total_tokens: usageMeta.totalTokenCount || (prompt + completion),
+          completion_tokens_details: {
+            reasoning_tokens: usageMeta.thoughtsTokenCount || 0
+          }
+        };
+      }
+    }
 
     // Accumulate tool_calls from streaming deltas
     if (Array.isArray(delta.tool_calls)) {
