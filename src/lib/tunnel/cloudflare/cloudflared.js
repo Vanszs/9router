@@ -10,6 +10,7 @@ import {
   NAMED_TUNNEL_HOSTNAME,
   NAMED_TUNNEL_CRED_FILE,
   NAMED_TUNNEL_ID,
+  validateNamedTunnelConfig,
 } from "./config.js";
 
 const BIN_DIR = path.join(DATA_DIR, "bin");
@@ -280,6 +281,17 @@ async function spawnCloudflared(tunnelToken) {
  * Resolves when cloudflared reports "Registered tunnel connection".
  */
 export async function spawnNamedTunnel(localPort, hostname) {
+  // Validate env config BEFORE creating temp dirs / writing config.
+  const validation = validateNamedTunnelConfig({
+    hostname,
+    token: NAMED_TUNNEL_TOKEN,
+    credFile: NAMED_TUNNEL_CRED_FILE,
+    id: NAMED_TUNNEL_ID,
+  });
+  if (!validation.ok) {
+    throw new Error(`Named tunnel config invalid: ${validation.errors.join("; ")}`);
+  }
+
   const binaryPath = await ensureCloudflared();
 
   const configDir = fs.mkdtempSync(path.join(os.tmpdir(), "cloudflared-named-"));
