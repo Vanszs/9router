@@ -116,6 +116,41 @@ describe("Antigravity executor", () => {
     expect(query).toEqual({ type: "string", description: "Search query" });
   });
 
+  // v1internal rejects a tool declaration carrying BOTH `parameters` and
+  // `parametersJsonSchema` ("must not be set when parameters is set").
+  // The executor must strip parametersJsonSchema on the v1internal request
+  // path only, leaving every other tool schema field intact.
+  it("strips parametersJsonSchema on the v1internal tool path", () => {
+    const out = new AntigravityExecutor().transformRequest("gemini-3.6-flash-high", {
+      request: {
+        contents: [{ role: "user", parts: [{ text: "hi" }] }],
+        tools: [{
+          functionDeclarations: [{
+            name: "lookup",
+            description: "Lookup a value",
+            parameters: {
+              type: "object",
+              properties: { query: { type: "string" } },
+            },
+            parametersJsonSchema: {
+              type: "object",
+              properties: { query: { type: "string" } },
+            },
+          }],
+        }],
+      },
+    }, true, { projectId: "project-1", connectionId: "conn-1" });
+
+    const decl = out.request.tools[0].functionDeclarations[0];
+    expect(decl.parametersJsonSchema).toBeUndefined();
+    expect(decl.name).toBe("lookup");
+    expect(decl.description).toBe("Lookup a value");
+    expect(decl.parameters).toEqual({
+      type: "object",
+      properties: { query: { type: "string" } },
+    });
+  });
+
   // Whitelist fix: Antigravity IDE passthrough sends unexpected OpenAI fields
   // in body.request → Google API rejects with "Unknown name" 400.
   it("whitelists request fields — strips max_tokens, messages, stream, etc.", () => {
