@@ -4,6 +4,7 @@ import { getProviderModels, PROVIDER_ID_TO_ALIAS } from "open-sse/config/provide
 import { isOpenAICompatibleProvider, isAnthropicCompatibleProvider } from "@/shared/constants/providers";
 import { UPDATER_CONFIG } from "@/shared/constants/config";
 import { pingModelByKind } from "@/app/api/models/test/ping";
+import { getProviderNodes } from "@/lib/db/repos/nodesRepo.js";
 
 /**
  * POST /api/providers/[id]/test-models
@@ -20,7 +21,21 @@ export async function POST(request, { params }) {
 
     const providerId = connection.provider;
     const isCompatible = isOpenAICompatibleProvider(providerId) || isAnthropicCompatibleProvider(providerId);
-    const alias = PROVIDER_ID_TO_ALIAS[providerId] || providerId;
+
+    // For openai-compatible/anthropic-compatible provider nodes, resolve the
+    // alias from the node's `prefix` field instead of falling back to the raw
+    // providerId (which is a UUID like openai-compatible-chat-b76148bf-…).
+    // The prefix is what the model list uses (e.g. "st", "atmo", "relayn").
+    let alias = PROVIDER_ID_TO_ALIAS[providerId] || providerId;
+    if (isCompatible && !PROVIDER_ID_TO_ALIAS[providerId]) {
+      try {
+        const nodes = await getProviderNodes();
+        const node = nodes.find((n) => n.id === providerId);
+        if (node?.prefix) {
+          alias = node.prefix;
+        }
+      } catch { /* fallback to providerId */ }
+    }
 
     let models = getProviderModels(alias);
 
