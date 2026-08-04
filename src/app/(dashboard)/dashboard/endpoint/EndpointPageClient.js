@@ -21,6 +21,7 @@ import EndpointRow from "./components/EndpointRow";
 import StatusAlert from "./components/StatusAlert";
 import Tooltip from "./components/Tooltip";
 import SecurityWarning from "./components/SecurityWarning";
+import { buildProviderList } from "@/shared/utils/aclProviderList";
 export default function APIPageClient({ machineId }) {
   const [keys, setKeys] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -448,45 +449,11 @@ export default function APIPageClient({ machineId }) {
   // ── ACL Edit Key handlers ──────────────────────────────────────────
   const ALL_KINDS = ["llm", "embedding", "image", "tts", "stt", "webSearch", "webFetch"];
 
-  // Build unique provider list grouped from connections + nodes, then merge in
-  // all registered providers (including free/noAuth ones like opencode that
-  // may have no connection yet) so the ACL dialog can grant access to them.
-  const buildProviderList = (connections, nodes, registered = []) => {
-    const nodeMap = {};
-    for (const n of (nodes || [])) {
-      // API returns prefix/apiType/baseUrl as top-level fields (parsed from data JSON)
-      nodeMap[n.id] = { name: n.name, prefix: n.prefix || null, type: n.type };
-    }
-    // Group connections by provider
-    const byProvider = {};
-    for (const c of (connections || [])) {
-      const p = c.provider;
-      if (!byProvider[p]) byProvider[p] = { id: p, count: 0, alias: c.alias || null };
-      byProvider[p].count++;
-    }
-    // Include registered providers with no connection (free/noAuth), count 0.
-    for (const r of (registered || [])) {
-      if (!byProvider[r.id]) {
-        byProvider[r.id] = { id: r.id, count: 0, alias: r.alias || null };
-      }
-    }
-    // Build final list with friendly names
-    const regById = {};
-    for (const r of (registered || [])) regById[r.id] = r;
-    return Object.values(byProvider).map(({ id, count, alias }) => {
-      const node = nodeMap[id];
-      const rp = regById[id];
-      let displayName = rp?.displayName || id;
-      let prefix = null;
-      if (node) {
-        displayName = node.name || id;
-        prefix = node.prefix || null;
-      }
-      return { id, displayName, prefix, alias, count };
-    }).sort((a, b) => a.displayName.localeCompare(b.displayName));
-  };
+  // Provider list for the ACL dialog is built by src/shared/utils/aclProviderList.js
+  // (connections + nodes + registered noAuth/free providers). Auth-requiring
+  // providers with zero connections are not shown.
 
-  const handleOpenEditKey = (key) => {
+  const handleOpenEditKey = async (key) => {
     setEditingKey(key);
     setEditName(key.name || "");
     const ap = key.allowedProviders;

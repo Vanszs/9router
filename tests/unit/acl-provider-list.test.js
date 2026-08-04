@@ -1,76 +1,156 @@
-import { describe, it, expect } from "vitest";
-import {
-  getAclProviderList,
-  AI_PROVIDERS,
-  FREE_PROVIDERS,
-  OAUTH_PROVIDERS,
-  APIKEY_PROVIDERS,
-} from "@/shared/constants/providers";
+// Regression tests for #86 review notes:
+// - show only ACL-eligible no-auth providers (not every registered provider)
+// - resolve dict payloads by requested provider ID/alias, not first value
+// - preserve provider aliases and custom provider-node prefixes
+// - keep external model fetches fail-soft with bounded timeout
+// - ACL allow/deny behavior for no-auth providers without connections
+import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
+import { buildProviderList } from "../../src/shared/utils/aclProviderList.js";
+import { fetchModelsFetcherIds } from "../../src/sse/services/allowedModels.js";
 
-describe("getAclProviderList (API key allowed-providers picker)", () => {
-  const list = getAclProviderList();
-
-  it("returns entries with the { alias, name, color } shape", () => {
-    expect(list.length).toBeGreaterThan(0);
-    for (const p of list) {
-      expect(typeof p.alias).toBe("string");
-      expect(p.alias.length).toBeGreaterThan(0);
-      expect(typeof p.name).toBe("string");
-      expect(p.name.length).toBeGreaterThan(0);
-      expect(typeof p.color).toBe("string");
-    }
-  });
-
-  it("is complete — covers every non-hidden provider alias in AI_PROVIDERS", () => {
-    const expectedAliases = new Set(
-      Object.values(AI_PROVIDERS)
-        .filter((p) => p?.alias && !p.hidden)
-        .map((p) => p.alias)
+describe("buildProviderList (ACL provider list)", () => {
+  it("includes connected providers with connection count", () => {
+    const list = buildProviderList(
+      [
+        { provider: "deepseek" },
+        { provider: "deepseek" },
+        { provider: "antigravity" },
+      ],
+      [],
+      []
     );
-    const actualAliases = new Set(list.map((p) => p.alias));
-    expect(actualAliases).toEqual(expectedAliases);
+    const deepseek = list.find((p) => p.id === "deepseek");
+    const ag = list.find((p) => p.id === "antigravity");
+    expect(deepseek.count).toBe(2);
+    expect(ag.count).toBe(1);
   });
 
-  it("includes representative providers from each category", () => {
-    const aliases = new Set(list.map((p) => p.alias));
-    // Free
-    expect(aliases.has(FREE_PROVIDERS.kiro.alias)).toBe(true);   // kr
-    expect(aliases.has(FREE_PROVIDERS.opencode.alias)).toBe(true); // oc
-    // OAuth
-    expect(aliases.has(OAUTH_PROVIDERS.github.alias)).toBe(true); // gh
-    expect(aliases.has(OAUTH_PROVIDERS.kilocode.alias)).toBe(true); // kc
-    // API key
-    expect(aliases.has(APIKEY_PROVIDERS.openai.alias)).toBe(true); // openai
-    expect(aliases.has(APIKEY_PROVIDERS.deepseek.alias)).toBe(true); // ds
-    expect(aliases.has(APIKEY_PROVIDERS.glm.alias)).toBe(true); // glm
+  it("includes registered noAuth providers with zero connections", () => {
+    const list = buildProviderList([], [], [
+      { id: "opencode", alias: "oc", noAuth: true, displayName: "OpenCode Free" },
+      { id: "mimo-free", alias: "mmf", noAuth: true, displayName: "MiMo Code Free" },
+    ]);
+    expect(list.find((p) => p.id === "opencode")).toMatchObject({
+      id: "opencode", alias: "oc", count: 0,
+    });
+    expect(list.find((p) => p.id === "mimo-free").count).toBe(0);
   });
 
-  it("covers more providers than the old hardcoded list of 22", () => {
-    expect(list.length).toBeGreaterThan(22);
+  it("excludes auth-requiring registered providers with zero connections", () => {
+    const list = buildProviderList([], [], [
+      { id: "deepseek", alias: "ds", noAuth: false, displayName: "DeepSeek" },
+    ]);
+    expect(list.find((p) => p.id === "deepseek")).toBeUndefined();
   });
 
-  it("has no duplicate aliases", () => {
-    const aliases = list.map((p) => p.alias);
-    expect(new Set(aliases).size).toBe(aliases.length);
+  it("preserves custom provider-node prefixes in display", () => {
+    const list = buildProviderList(
+      [{ provider: "openai-compatible-chat-abc123" }],
+      [{ id: "openai-compatible-chat-abc123", name: "Shiteru", prefix: "st", type: "openai-compatible" }],
+      []
+    );
+    expect(list.find((p) => p.id === "openai-compatible-chat-abc123")).toMatchObject({
+      displayName: "Shiteru",
+      prefix: "st",
+    });
   });
 
-  it("excludes hidden (media-only) providers", () => {
-    const hiddenAliases = Object.values(AI_PROVIDERS)
-      .filter((p) => p?.hidden && p.alias)
-      .map((p) => p.alias);
-    const actual = new Set(list.map((p) => p.alias));
-    for (const a of hiddenAliases) {
-      // only excluded if no other non-hidden provider shares the alias
-      const sharedByVisible = Object.values(AI_PROVIDERS).some(
-        (p) => p.alias === a && !p.hidden
-      );
-      if (!sharedByVisible) expect(actual.has(a)).toBe(false);
-    }
+  it("keeps alias when resolving node names", () => {
+    const list = buildProviderList(
+      [{ provider: "opencode", alias: "oc" }],
+      [],
+      []
+    );
+    expect(list.find((p) => p.id === "opencode").alias).toBe("oc");
+  });
+});
+
+describe("fetchModelsFetcherIds dict resolution", () => {
+  const originalFetch = globalThis.fetch;
+  let key;
+  beforeEach(() => { key = `test-${Math.random()}`; globalThis.fetch = vi.fn(); });
+  afterEach(() => { globalThis.fetch = originalFetch; });
+
+  it("resolves multi-provider dict by provider id", async () => {
+    globalThis.fetch.mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        opencode: { models: { "deepseek-v4-flash-free": { id: "deepseek-v4-flash-free" } } },
+        "another-provider": { models: { "not-free": { id: "not-free" } } },
+      }),
+    });
+    const ids = await fetchModelsFetcherIds("opencode", {
+      id: "opencode",
+      alias: "oc",
+      modelsFetcher: { url: "https://models.dev/api.json", type: "opencode-free" },
+    });
+    expect(ids).toEqual(["deepseek-v4-flash-free"]);
   });
 
-  it("is sorted alphabetically by display name", () => {
-    const names = list.map((p) => p.name);
-    const sorted = [...names].sort((a, b) => a.localeCompare(b));
-    expect(names).toEqual(sorted);
+  it("resolves dict by alias when provider id absent", async () => {
+    const pid = "opencode-alias-test";
+    globalThis.fetch.mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        oc: { models: { "ling-3.0-flash-free": { id: "ling-3.0-flash-free" } } },
+      }),
+    });
+    const ids = await fetchModelsFetcherIds(pid, {
+      id: pid,
+      alias: "oc",
+      modelsFetcher: { url: "https://models.dev/api.json", type: "opencode-free" },
+    });
+    expect(ids).toEqual(["ling-3.0-flash-free"]);
+  });
+
+  it("returns empty on missing provider key (no first-value fallback)", async () => {
+    const pid = "opencode-missing-key-test";
+    globalThis.fetch.mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        "other-provider": { models: { "x-free": { id: "x-free" } } },
+      }),
+    });
+    const ids = await fetchModelsFetcherIds(pid, {
+      id: pid,
+      alias: "oc",
+      modelsFetcher: { url: "https://models.dev/api.json", type: "opencode-free" },
+    });
+    expect(ids).toEqual([]);
+  });
+
+  it("fail-soft on network error returns []", async () => {
+    const pid = "opencode-neterr-test";
+    globalThis.fetch.mockRejectedValue(new Error("network down"));
+    const ids = await fetchModelsFetcherIds(pid, {
+      id: pid,
+      alias: "oc",
+      modelsFetcher: { url: "https://models.dev/api.json", type: "opencode-free" },
+    });
+    expect(ids).toEqual([]);
+  });
+
+  it("fail-soft on non-ok response returns []", async () => {
+    const pid = "opencode-nonok-test";
+    globalThis.fetch.mockResolvedValue({ ok: false });
+    const ids = await fetchModelsFetcherIds(pid, {
+      id: pid,
+      alias: "oc",
+      modelsFetcher: { url: "https://models.dev/api.json", type: "opencode-free" },
+    });
+    expect(ids).toEqual([]);
+  });
+
+  it("uses bounded timeout for fetches", async () => {
+    const pid = "opencode-timeout-test";
+    globalThis.fetch.mockResolvedValue({ ok: true, json: async () => ({}) });
+    await fetchModelsFetcherIds(pid, {
+      id: pid,
+      alias: "oc",
+      modelsFetcher: { url: "https://models.dev/api.json", type: "opencode-free" },
+    });
+    const [url, opts] = globalThis.fetch.mock.calls[0];
+    expect(url).toBe("https://models.dev/api.json");
+    expect(opts.signal).toBeInstanceOf(AbortSignal);
   });
 });

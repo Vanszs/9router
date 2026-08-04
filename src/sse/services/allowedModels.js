@@ -174,19 +174,24 @@ export async function fetchModelsFetcherIds(providerId, providerInfo) {
     } else if (Array.isArray(data?.data)) {
       rawModels = data.data;
     } else if (typeof data?.models === "object" && data.models !== null && !Array.isArray(data.models)) {
-      // { provider: { models: { modelId: {...} } } }
+      // { models: { modelId: {...} } }
       rawModels = Object.values(data.models);
-    } else if (
-      data &&
-      typeof data === "object" &&
-      !Array.isArray(data) &&
-      typeof Object.values(data)[0]?.models === "object" &&
-      Object.values(data)[0].models !== null &&
-      !Array.isArray(Object.values(data)[0].models)
-    ) {
-      // models.dev top-level shape: { provider: { models: { modelId: {...} } } }
-      // (some fetchers like opencode's models.dev return the provider entry directly)
-      rawModels = Object.values(Object.values(data)[0].models);
+    } else if (data && typeof data === "object" && !Array.isArray(data)) {
+      // models.dev top-level shape: { provider: { models: { modelId: {...} } } }.
+      // Resolve by the requested provider ID/alias, NOT the first object value,
+      // so multi-provider payloads pick the right catalog.
+      const providerKey = providerInfo?.id || providerId;
+      const aliasKey = providerInfo?.alias || providerInfo?.uiAlias;
+      const entry =
+        data[providerKey] ||
+        data[aliasKey] ||
+        (providerId in data ? data[providerId] : null);
+      const models = entry?.models;
+      if (models && typeof models === "object" && !Array.isArray(models)) {
+        rawModels = Object.values(models);
+      } else {
+        rawModels = [];
+      }
     } else {
       rawModels = data?.models || data?.results || [];
     }

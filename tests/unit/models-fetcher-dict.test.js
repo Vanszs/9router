@@ -8,9 +8,7 @@ import { fetchModelsFetcherIds } from "../../src/sse/services/allowedModels.js";
 
 describe("fetchModelsFetcherIds", () => {
   const originalFetch = globalThis.fetch;
-  let cacheKey;
   beforeEach(() => {
-    cacheKey = `test-${Math.random()}`;
     globalThis.fetch = vi.fn();
   });
   afterEach(() => {
@@ -18,11 +16,12 @@ describe("fetchModelsFetcherIds", () => {
   });
 
   it("handles models.dev dict shape for opencode-free fetcher", async () => {
+    const pid = "opencode-dict-test";
     globalThis.fetch.mockResolvedValue({
       ok: true,
       json: async () => ({
-        opencode: {
-          id: "opencode",
+        [pid]: {
+          id: pid,
           models: {
             "deepseek-v4-flash-free": { id: "deepseek-v4-flash-free" },
             "ling-3.0-flash-free": { id: "ling-3.0-flash-free" },
@@ -32,7 +31,9 @@ describe("fetchModelsFetcherIds", () => {
       }),
     });
 
-    const ids = await fetchModelsFetcherIds(cacheKey, {
+    const ids = await fetchModelsFetcherIds(pid, {
+      id: pid,
+      alias: "oc",
       modelsFetcher: { url: "https://models.dev/api.json", type: "opencode-free" },
     });
 
@@ -42,12 +43,14 @@ describe("fetchModelsFetcherIds", () => {
   });
 
   it("still supports array shapes", async () => {
+    const pid = "generic-array-test";
     globalThis.fetch.mockResolvedValue({
       ok: true,
       json: async () => [{ id: "model-a" }, { id: "model-b" }],
     });
 
-    const ids = await fetchModelsFetcherIds(cacheKey, {
+    const ids = await fetchModelsFetcherIds(pid, {
+      id: pid,
       modelsFetcher: { url: "https://x/models", type: "generic" },
     });
 
