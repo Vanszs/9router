@@ -186,3 +186,54 @@ export function getProxyHash(providerSpecificData = {}) {
   if (poolId) return `pool-${djb2(poolId)}`;
   return "direct";
 }
+
+// In-memory counters for round-robin / fill-first proxy pool rotation.
+// Keyed by `${providerId}:${strategy}:${poolIds}` so different providers,
+// strategies, and selected pool subsets keep independent cursors.
+const _poolCursors = new Map();
+
+function normalizeTargetPoolIds(targetProxyPoolIds) {
+  if (!Array.isArray(targetProxyPoolIds)) return [];
+  return [...new Set(targetProxyPoolIds.map(normalizeString).filter(Boolean))];
+}
+
+export function filterTargetProxyPoolIds(poolIds, targetProxyPoolIds = []) {
+  if (!Array.isArray(poolIds) || poolIds.length === 0) return [];
+  const targets = normalizeTargetPoolIds(targetProxyPoolIds);
+  if (targets.length === 0) return poolIds;
+  const allowed = new Set(targets);
+  return poolIds.filter((id) => allowed.has(id));
+}
+
+/**
+ * Pick a proxy pool id from active pool ids using the configured strategy.
+ * Empty targetProxyPoolIds means all active pools. Non-empty targets filter the
+ * rotation subset; if every target is inactive/missing, returns null so callers
+ * can fall back safely instead of silently using an unselected pool.
+ *
+ * @param {string[]} poolIds active proxy pool ids with a proxyUrl
+ * @param {string} strategy rotation strategy from providerStrategies override
+ * @param {string} providerId provider id for per-provider cursor isolation
+ * @param {string[]} targetProxyPoolIds optional selected subset
+ * @returns {string|null} chosen pool id, or null when pool/subset is empty
+ */
+export function pickProxyPoolId(poolIds, strategy, providerId = "", targetProxyPoolIds = []) {
+  const eligiblePoolIds = filterTargetProxyPoolIds(poolIds, targetProxyPoolIds);
+  if (eligiblePoolIds.length === 0) return null;
+  const strat = String(strategy || "").toLowerCase();
+
+  if (strat === "fill-first") return eligiblePoolIds[0];
+
+  if (strat === "round-robin") {
+    const key = `${providerId}:${strat}:${eligiblePoolIds.join(",")}`;
+    const idx = (_poolCursors.get(key) ?? 0) % eligiblePoolIds.length;
+    _poolCursors.set(key, (idx + 1) % eligiblePoolIds.length);
+    return eligiblePoolIds[idx];
+  }
+
+  if (strat === "random") {
+    return eligiblePoolIds[Math.floor(Math.random() * eligiblePoolIds.length)];
+  }
+
+  return null;
+}
