@@ -369,12 +369,19 @@ export default function ProviderDetailPage() {
       const settingsRes = await fetch("/api/settings", { cache: "no-store" });
       const settingsData = settingsRes.ok ? await settingsRes.json() : {};
       const current = settingsData.providerStrategies || {};
+      const existingOverride = current[providerId] || {};
 
-      // Build override: null strategy means remove override, use global
-      const override = {};
-      if (strategy) override.fallbackStrategy = strategy;
+      // Build override: merge with existing override to preserve proxy settings
+      const override = { ...existingOverride };
+      if (strategy) {
+        override.fallbackStrategy = strategy;
+      } else {
+        delete override.fallbackStrategy;
+      }
       if (strategy === "round-robin" && stickyLimit !== "") {
         override.stickyRoundRobinLimit = Number(stickyLimit) || 3;
+      } else {
+        delete override.stickyRoundRobinLimit;
       }
 
       const updated = { ...current };
@@ -1415,9 +1422,11 @@ export default function ProviderDetailPage() {
 
       {/* Connections */}
       {isFreeNoAuth ? (
-        <NoAuthProxyCard providerId={providerId} />
+        <NoAuthProxyCard providerId={providerId} isFreeNoAuth={true} />
       ) : (
-        <Card>
+        <div className="flex flex-col gap-6">
+          <NoAuthProxyCard providerId={providerId} isFreeNoAuth={false} />
+          <Card>
           <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <h2 className="text-lg font-semibold">Connections</h2>
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:gap-4">
@@ -1630,6 +1639,7 @@ export default function ProviderDetailPage() {
             </>
           )}
         </Card>
+        </div>
       )}
 
       {/* Models */}

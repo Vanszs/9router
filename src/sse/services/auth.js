@@ -178,7 +178,22 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
       connection = availableConnections[0];
     }
 
-    const resolvedProxy = await resolveConnectionProxyConfig(connection.providerSpecificData || {});
+    // Proxy rotation — override per-connection proxy pool with dynamically selected
+    // pool when the provider has a rotation strategy configured (round-robin/random).
+    const proxyOverride = (settings.providerStrategies || {})[providerId] || {};
+    const proxyStrategy = proxyOverride.rotateStrategy || "none";
+    let rotProxyPoolId = connection.providerSpecificData?.proxyPoolId || null;
+    if (proxyStrategy !== "none") {
+      const allPools = await getProxyPools({ isActive: true });
+      const poolIds = allPools.filter(p => p.proxyUrl).map(p => p.id);
+      if (poolIds.length > 0) {
+        rotProxyPoolId = pickProxyPoolId(poolIds, proxyStrategy, providerId);
+      }
+    }
+    const resolvedProxy = await resolveConnectionProxyConfig({
+      ...(connection.providerSpecificData || {}),
+      proxyPoolId: rotProxyPoolId || "",
+    });
 
     return {
       authType: connection.authType,
