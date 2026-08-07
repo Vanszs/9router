@@ -103,12 +103,7 @@ function buildTransformStream({ provider, sourceFormat, targetFormat, userAgent,
  * Includes a readiness gate: if upstream closes before any byte arrives,
  * return STREAM_EARLY_EOF so the caller can retry once on the same connection.
  */
-export async function handleStreamingResponse({
-  providerResponse, provider, model, sourceFormat, targetFormat, userAgent,
-  body, stream, translatedBody, finalBody, requestStartTime, connectionId,
-  apiKey, apiKeyInfo, apiKeyName, clientModelId, clientRawRequest, onRequestSuccess,
-  reqLogger, toolNameMap, streamController, onStreamComplete, streamDetailId, pxpipe,
-}) {
+export async function handleStreamingResponse({ providerResponse, provider, model, clientModelId, sourceFormat, targetFormat, userAgent, body, stream, translatedBody, finalBody, requestStartTime, connectionId, apiKey, apiKeyName, clientRawRequest, onRequestSuccess, reqLogger, toolNameMap, streamController, onStreamComplete, streamDetailId, pxpipe }) {
   if (onRequestSuccess) {
     Promise.resolve()
       .then(onRequestSuccess)
@@ -185,7 +180,7 @@ export async function handleStreamingResponse({
 /**
  * Build onStreamComplete callback for streaming usage tracking.
  */
-export function buildOnStreamComplete({ provider, model, connectionId, apiKey, apiKeyInfo, apiKeyName, requestStartTime, body, stream, finalBody, translatedBody, clientRawRequest, pxpipe }) {
+export function buildOnStreamComplete({ provider, model, connectionId, apiKey, apiKeyName, requestStartTime, body, stream, finalBody, translatedBody, clientRawRequest, pxpipe }) {
   const streamDetailId = `${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
 
   const onStreamComplete = (contentObj, usage, ttftAt) => {
@@ -210,7 +205,7 @@ export function buildOnStreamComplete({ provider, model, connectionId, apiKey, a
       console.error("[RequestDetail] Failed to update streaming content:", err.message);
     });
 
-    saveUsageStats({ provider, model, tokens: usage, connectionId, apiKey, apiKeyInfo, endpoint: clientRawRequest?.endpoint, label: "STREAM USAGE" });
+    saveUsageStats({ provider, model, tokens: usage, connectionId, apiKey, endpoint: clientRawRequest?.endpoint, label: "STREAM USAGE" });
   };
 
   return { onStreamComplete, streamDetailId };
