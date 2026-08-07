@@ -26,6 +26,7 @@ import { dedupeTools } from "../utils/toolDeduper.js";
 import { detectLoop } from "../utils/loopGuard.js";
 import { injectCaveman } from "../rtk/caveman.js";
 import { injectPonytail } from "../rtk/ponytail.js";
+import { injectDefaultSystemPrompt } from "../rtk/systemInject.js";
 import { injectSystemPrompt } from "../rtk/systemInject.js";
 import { injectTerminationPrompt, injectToolProtocolPrompt } from "../rtk/terminationPrompt.js";
 import { compressMessages, formatRtkLog } from "../rtk/index.js";
@@ -286,7 +287,7 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
   // not already carry a system message. Token-saver prompts (caveman/ponytail)
   // below APPEND to it into the same system slot, preserving the default.
   if (systemPrompt) {
-    injectSystemPrompt(translatedBody, finalFormat, systemPrompt);
+    injectDefaultSystemPrompt(translatedBody, finalFormat, systemPrompt);
     log?.debug?.("SYSPROMPT", `default injected | ${finalFormat}`);
   }
 
