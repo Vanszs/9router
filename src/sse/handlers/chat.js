@@ -439,7 +439,18 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
     const providerThinking = (chatSettings.providerThinking || {})[provider] || null;
     try {
       result = await handleChatCore({
-      body: { ...body, model: `${provider}/${model}` },
+      body: chatBody,
+
+    const isGeminiLike = provider === "gemini-cli" || provider === "vertex";
+    const hasNoTools = !Array.isArray(body?.tools) || body.tools.length === 0;
+    const isJsonMode = body?.response_format?.type === "json_schema" || body?.response_format?.type === "json_object";
+    const chatBody = { ...body, model: `${provider}/${model}` };
+    if (isGeminiLike && chatSettings.webSearchEnabled && hasNoTools && !isJsonMode) {
+      chatBody.web_search = true;
+    }
+    if (isGeminiLike && body?.include_reasoning == null) {
+      chatBody.include_reasoning = !!chatSettings.visibleReasoningEnabled;
+    }
       modelInfo: { provider, model, accountCount: providerAccountCount },
       credentials: refreshedCredentials,
       log,
