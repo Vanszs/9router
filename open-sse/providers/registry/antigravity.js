@@ -19,7 +19,12 @@ export default {
   category: "oauth",
   serviceKinds: ["llm", "image"],
   transport: {
-    baseUrls: [ANTIGRAVITY_IDE_BASE_URL],
+    // Gemini 3.6 Flash is only served from the daily Cloud Code host today.
+    // Keep production as fallback for older models if daily flakes.
+    baseUrls: [
+      "https://daily-cloudcode-pa.googleapis.com",
+      ANTIGRAVITY_IDE_BASE_URL,
+    ],
     format: "antigravity",
     headers: {
       "User-Agent": ANTIGRAVITY_IDE_USER_AGENT,
