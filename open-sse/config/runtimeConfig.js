@@ -55,6 +55,13 @@ export const STREAM_FIRST_CHUNK_TIMEOUT_MS = envMs("STREAM_FIRST_CHUNK_TIMEOUT_M
 // Fetch connect timeout: abort if upstream doesn't return response headers within this duration
 export const FETCH_CONNECT_TIMEOUT_MS = envMs("FETCH_CONNECT_TIMEOUT_MS", 60 * 1000);
 
+// Streaming readiness-gate peek bound: the gate (peekStreamReadiness) awaits
+// the first upstream chunk before returning the Response to the client. This
+// bounds how long client HTTP headers can be held back when upstream is slow
+// to emit its first byte. Short closes are still caught as STREAM_EARLY_EOF.
+// Env: STREAM_READINESS_PEEK_TIMEOUT_MS.
+export const STREAM_READINESS_PEEK_TIMEOUT_MS = envMs("STREAM_READINESS_PEEK_TIMEOUT_MS", 500);
+
 // Gemini native TTS fetch timeout: abort if Google does not return response headers in time.
 export const GEMINI_NATIVE_TTS_FETCH_TIMEOUT_MS = envMs("GEMINI_NATIVE_TTS_FETCH_TIMEOUT_MS", 45 * 1000);
 

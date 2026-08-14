@@ -4,7 +4,7 @@ import { createSSETransformStreamWithLogger, createPassthroughStreamWithLogger }
 import { normalizeKimiToolCalls } from "../../utils/kimiToolParser.js";
 import { pipeWithDisconnect } from "../../utils/streamHandler.js";
 import { PROVIDERS } from "../../config/providers.js";
-import { STREAM_STALL_TIMEOUT_MS } from "../../config/runtimeConfig.js";
+import { STREAM_STALL_TIMEOUT_MS, STREAM_READINESS_PEEK_TIMEOUT_MS } from "../../config/runtimeConfig.js";
 import { buildAbortedResponsesTerminalBytes } from "../../utils/responsesStreamHelpers.js";
 import { buildRequestDetail, extractRequestConfig, saveUsageStats } from "./requestDetail.js";
 import { saveRequestDetail } from "@/lib/usageDb.js";
@@ -14,38 +14,75 @@ const STREAM_EARLY_EOF_STATUS = 502;
 
 /**
  * Peek the first chunk of a ReadableStream to detect early EOF.
- * If the stream closes before any byte arrives, return { empty: true }.
- * Otherwise return the first chunk + the reader so the caller can
- * reconstruct a stream that still contains that first chunk.
+ *
+ * Time-boxed: waits at most `timeoutMs` for the first byte so a slow-to-start
+ * upstream does not hold the client's HTTP headers hostage for the full TTFT.
+ * Cases:
+ *   - stream closes before any byte  → { empty: true }   (STREAM_EARLY_EOF)
+ *   - first byte within window      → { empty: false, firstChunk, reader }
+ *   - no byte within window         → { empty: false, firstChunk: null, reader, timedOut: true }
+ *                                     (caller pipes on; instant closes are still caught)
  */
-async function peekStreamReadiness(body) {
+async function peekStreamReadiness(body, timeoutMs = STREAM_READINESS_PEEK_TIMEOUT_MS) {
   if (!body || typeof body.getReader !== "function") {
     return { empty: true };
   }
   const reader = body.getReader();
+  const readPromise = reader.read();
+  let timer = null;
+  const timeoutPromise = new Promise((resolve) => {
+    timer = setTimeout(() => resolve("__readiness_timeout__"), timeoutMs);
+  });
   try {
-    const { done, value } = await reader.read();
-    if (done) {
+    const result = await Promise.race([readPromise, timeoutPromise]);
+    if (result === "__readiness_timeout__") {
+      // The initial read is still in flight — hand it to the reconstruct
+      // stream so it can await it without issuing a concurrent reader.read().
+      return { empty: false, firstChunk: null, reader, initialRead: readPromise, timedOut: true };
+    }
+    if (result.done) {
       return { empty: true };
     }
-    return { empty: false, firstChunk: value, reader };
+    return { empty: false, firstChunk: result.value, reader };
   } catch (error) {
     reader.cancel?.().catch(() => {});
     throw error;
+  } finally {
+    if (timer) clearTimeout(timer);
   }
 }
 
 /**
  * Reconstruct a ReadableStream from a peeked first chunk + remaining reader.
+ * When the peek time-boxed out (`initialRead` pending), awaits that shared
+ * read before continuing — no concurrent reader.read().
  */
-function reconstructStream({ firstChunk, reader }) {
-  let enqueuedFirst = false;
+function reconstructStream({ firstChunk, reader, initialRead }) {
+  let first = true;
   return new ReadableStream({
     async pull(controller) {
-      if (!enqueuedFirst) {
-        controller.enqueue(firstChunk);
-        enqueuedFirst = true;
-        return;
+      if (first) {
+        first = false;
+        if (firstChunk) {
+          controller.enqueue(firstChunk);
+          return;
+        }
+        if (initialRead) {
+          try {
+            const { done, value } = await initialRead;
+            if (done) {
+              controller.close();
+              reader.releaseLock?.();
+            } else {
+              controller.enqueue(value);
+            }
+            return;
+          } catch (error) {
+            controller.error(error);
+            reader.cancel?.().catch(() => {});
+            return;
+          }
+        }
       }
       try {
         const { done, value } = await reader.read();
