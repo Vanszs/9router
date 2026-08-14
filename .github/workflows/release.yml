@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
 
 env:
-  GHCR_IMAGE: ghcr.io/vanszs/vansrouter
+  GHCR_IMAGE: ghcr.io/creator911/vansrouter
 
 jobs:
   check-branch:
