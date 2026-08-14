@@ -1,65 +1,38 @@
-name: Release
+name: Docker Image (Branch)
 
 on:
   push:
-    tags:
-      - "v*"
+    branches:
+      - master
+      - main
   workflow_dispatch:
 
 env:
-  GHCR_IMAGE: ghcr.io/creator911/vansrouter
+  DOCKERHUB_IMAGE: creator911/vansrouter
 
 jobs:
-  check-branch:
-    runs-on: ubuntu-latest
-    outputs:
-      is-main: ${{ steps.check.outputs.is-main }}
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Verify tag/commit is on main
-        id: check
-        run: |
-          git fetch origin main
-          if git merge-base --is-ancestor HEAD origin/main; then
-            echo "is-main=true" >> "$GITHUB_OUTPUT"
-            echo "✅ Release target is on main"
-          else
-            echo "is-main=false" >> "$GITHUB_OUTPUT"
-            echo "⛔ Release skipped: tag is not on main"
-          fi
-
-  build-and-push-ghcr:
-    needs: check-branch
-    if: needs.check-branch.outputs.is-main == 'true'
+  build-and-push:
     runs-on: ubuntu-latest
     permissions:
-      actions: write
       contents: read
-      packages: write
 
     steps:
       - uses: actions/checkout@v4
 
       - uses: docker/setup-buildx-action@v3
 
-      - name: Log in to GHCR
+      - name: Log in to Docker Hub
         uses: docker/login-action@v3
         with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Extract metadata
+      - name: Generate tags
         id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ${{ env.GHCR_IMAGE }}
-          tags: |
-            type=semver,pattern={{version}}
-            type=raw,value=latest,enable={{is_default_branch}}
+        run: |
+          BRANCH=${GITHUB_REF_NAME}
+          SHA=${GITHUB_SHA::7}
+          echo "tags=${DOCKERHUB_IMAGE}:${BRANCH}-${SHA},${DOCKERHUB_IMAGE}:latest" >> $GITHUB_OUTPUT
 
       - name: Build and push
         uses: docker/build-push-action@v6
@@ -67,64 +40,8 @@ jobs:
           context: .
           push: true
           tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          cache-from: type=gha,scope=release
-          cache-to: type=gha,scope=release,mode=max,ignore-error=true,timeout=5m
+          cache-from: type=registry,ref=${{ env.DOCKERHUB_IMAGE }}:buildcache
+          cache-to: type=registry,ref=${{ env.DOCKERHUB_IMAGE }}:buildcache,mode=max
           platforms: linux/amd64,linux/arm64
           provenance: false
           sbom: false
-
-      - name: Verify multi-platform manifest
-        run: |
-          docker buildx imagetools inspect "${{ env.GHCR_IMAGE }}:${{ steps.meta.outputs.version }}" | tee /tmp/image-manifest.txt
-          grep -q 'linux/amd64' /tmp/image-manifest.txt
-          grep -q 'linux/arm64' /tmp/image-manifest.txt
-
-      - name: Verify native SQLite in image
-        run: |
-          docker pull "${{ env.GHCR_IMAGE }}:${{ steps.meta.outputs.version }}"
-          docker run --rm "${{ env.GHCR_IMAGE }}:${{ steps.meta.outputs.version }}" \
-            node -e "const D=require('better-sqlite3'); const db=new D(':memory:'); if (db.prepare('SELECT 1 AS ok').get().ok !== 1) process.exit(1); db.close(); console.log('native SQLite OK')"
-
-  publish-npm:
-    needs: check-branch
-    if: needs.check-branch.outputs.is-main == 'true'
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      id-token: write
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          version: 9
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          registry-url: https://registry.npmjs.org/
-
-      - name: Configure pnpm hoisting config
-        shell: bash
-        run: |
-          echo "public-hoist-pattern=*" >> .npmrc
-          echo "shamefully-hoist=true" >> .npmrc
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-
-      - name: Upgrade npm for trusted publishing
-        run: npm install --global npm@latest
-
-      - name: Install CLI package devDependencies
-        # cli/ is not in pnpm-workspace.yaml, so its devDependencies (esbuild)
-        # are not installed by `pnpm install`. Install them here so the CLI
-        # build script (which requires esbuild) can run.
-        run: npm install --prefix cli --no-audit --no-fund
-
-      - name: Build and publish CLI package
-        run: npm publish ./cli --provenance
