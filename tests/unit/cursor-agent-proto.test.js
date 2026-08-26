@@ -14,6 +14,7 @@ import {
 import {
   isAgentCapableRequest,
   buildAgentRunFrame,
+  decodeCursorAgentExecEvent,
 } from "../../open-sse/executors/cursor.js";
 
 // AgentService (agent.v1) codec tests — validate the production implementation
@@ -263,7 +264,7 @@ describe("Cursor AgentService executor helpers (cursor.js)", () => {
       expect(run.has(4)).toBe(false);
     });
 
-    it("encodes conversation_history from prior turns including tool calls/results", () => {
+    it("cold-resumes tool history inside current user text", () => {
       const messages = [
         { role: "user", content: "weather in Tokyo?" },
         { role: "assistant", content: null, tool_calls: [{ id: "c1", type: "function", function: { name: "get_weather", arguments: '{"city":"Tokyo"}' } }] },
@@ -274,9 +275,65 @@ describe("Cursor AgentService executor helpers (cursor.js)", () => {
       const run = decodeMessage(decodeMessage(frame).get(1)[0].value);
       const action = decodeMessage(run.get(2)[0].value);
       const userAction = decodeMessage(action.get(1)[0].value);
-      expect(userAction.has(7)).toBe(true); // conversation_history (field 7)
-      const history = decodeMessage(userAction.get(7)[0].value);
-      expect(history.get(1).length).toBeGreaterThanOrEqual(2); // prior turns
+      expect(userAction.has(7)).toBe(false);
+      const userMessage = decodeMessage(userAction.get(1)[0].value);
+      const text = Buffer.from(userMessage.get(1)[0].value).toString("utf8");
+      expect(text).toContain("[assistant tool call c1] get_weather");
+      expect(text).toContain("[tool result c1] 18C cloudy");
+      expect(text).toContain("[user] thanks");
+    });
+
+    it("honors a specific function tool_choice", () => {
+      const tools = ["first", "second"].map((name) => ({ function: { name, parameters: { type: "object" } } }));
+      const frame = unwrap(buildAgentRunFrame(
+        [{ role: "user", content: "go" }],
+        "gpt-5.2",
+        tools,
+        { type: "function", function: { name: "second" } },
+      ));
+      const run = decodeMessage(decodeMessage(frame).get(1)[0].value);
+      const encodedTools = decodeMessage(run.get(4)[0].value);
+      expect(encodedTools.get(1)).toHaveLength(1);
+      expect(Buffer.from(decodeMessage(encodedTools.get(1)[0].value).get(1)[0].value).toString("utf8")).toBe("second");
+    });
+  });
+
+  describe("AgentService exec channel", () => {
+    const serverMessage = (exec) => decodeMessage(encodeField(2, LEN, exec));
+
+    it("preserves request-context message and execution IDs", () => {
+      const exec = Buffer.concat([
+        Buffer.from(encodeField(1, 0, 17)),
+        Buffer.from(encodeField(15, LEN, "exec-context")),
+        Buffer.from(encodeField(10, LEN, new Uint8Array())),
+      ]);
+      expect(decodeCursorAgentExecEvent(serverMessage(exec))).toEqual({
+        kind: "context",
+        execMsgId: 17,
+        execId: "exec-context",
+      });
+    });
+
+    it("decodes MCP tool name, call id, and structured arguments", () => {
+      const mcpArgs = Buffer.concat([
+        Buffer.from(encodeField(1, LEN, "fallback_name")),
+        entry("city", "Tokyo"),
+        Buffer.from(encodeField(3, LEN, "cursor-call-1")),
+        Buffer.from(encodeField(5, LEN, "get_weather")),
+      ]);
+      const exec = Buffer.concat([
+        Buffer.from(encodeField(1, 0, 23)),
+        Buffer.from(encodeField(15, LEN, "exec-mcp")),
+        Buffer.from(encodeField(11, LEN, mcpArgs)),
+      ]);
+      expect(decodeCursorAgentExecEvent(serverMessage(exec))).toEqual({
+        kind: "mcp",
+        execMsgId: 23,
+        execId: "exec-mcp",
+        name: "get_weather",
+        callId: "cursor-call-1",
+        args: { city: "Tokyo" },
+      });
     });
   });
 });

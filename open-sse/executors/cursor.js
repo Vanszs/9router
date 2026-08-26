@@ -8,7 +8,8 @@ import {
   decodeMessage,
   parseConnectRPCFrame,
   extractTextFromResponse,
-  encodeMcpTools
+  encodeMcpTools,
+  decodeMcpArgs
 } from "../utils/cursorProtobuf.js";
 import { buildCursorHeaders } from "../utils/cursorChecksum.js";
 import { estimateUsage } from "../utils/usageTracking.js";
@@ -60,6 +61,7 @@ function concatBuffers(...parts) {
 
 const agentString = (field, value) => encodeField(field, PROTOBUF_LEN, value);
 const agentMessage = (field, value) => encodeField(field, PROTOBUF_LEN, value);
+const agentVarint = (field, value) => encodeField(field, PROTOBUF_VARINT, value);
 const agentBool = (field, value) => encodeField(field, PROTOBUF_VARINT, value ? 1 : 0);
 
 function textFromContent(content) {
@@ -73,23 +75,50 @@ function textFromContent(content) {
 
 export function isAgentCapableRequest(body) {
   return Array.isArray(body?.messages) && body.messages.every((message) => {
-    if (message?.role === "tool" || message?.tool_calls?.length) return true;
-    return typeof message?.content === "string"
-      || Array.isArray(message?.content) && message.content.every((part) => part?.type === "text");
+    if (message?.role === "tool") return true;
+    if (message?.tool_calls !== undefined && !Array.isArray(message.tool_calls)) return false;
+    return message?.content == null
+      || typeof message.content === "string"
+      || Array.isArray(message.content) && message.content.every((part) => part?.type === "text");
   });
 }
 
-function isAgentTextRequest(body) {
-  // Many compatible clients always attach their built-in tool schemas, even
-  // for a normal text turn. Cursor's retired ChatService rejects those
-  // requests; AgentService can still answer the text turn, so ignore schemas
-  // here. A real tool-call/result conversation is kept on the legacy path
-  // until its AgentService tool protocol is implemented.
-  return Array.isArray(body?.messages) && body.messages.every((message) => {
-    if (message?.tool_calls?.length || message?.role === "tool") return false;
-    return typeof message?.content === "string"
-      || Array.isArray(message?.content) && message.content.every((part) => part?.type === "text");
-  });
+function serializeToolCall(call) {
+  const name = call?.function?.name || "unknown_tool";
+  const args = typeof call?.function?.arguments === "string"
+    ? call.function.arguments
+    : JSON.stringify(call?.function?.arguments ?? {});
+  return `[assistant tool call ${call?.id || "unknown"}] ${name} ${args}`;
+}
+function flattenAgentMessages(messages) {
+  return messages
+    .filter((message) => message?.role !== "system")
+    .flatMap((message) => {
+      const lines = [];
+      const content = textFromContent(message?.content);
+      if (message?.role === "tool") {
+        lines.push(`[tool result ${message.tool_call_id || "unknown"}] ${content || "(empty result)"}`);
+      } else if (content) {
+        lines.push(`[${message.role || "user"}] ${content}`);
+      }
+      for (const call of message?.tool_calls || []) lines.push(serializeToolCall(call));
+      return lines;
+    })
+    .join("\n\n");
+}
+
+function selectAgentTools(tools, toolChoice) {
+  if (toolChoice === "none") return [];
+  const requiredName = toolChoice?.type === "function" && typeof toolChoice?.function?.name === "string"
+    ? toolChoice.function.name
+    : null;
+  return requiredName ? tools.filter((tool) => (tool?.function?.name || tool?.name) === requiredName) : tools;
+}
+
+function toolDirective(toolChoice) {
+  if (toolChoice === "required") return " You MUST call one of the provided tools before answering.";
+  const name = toolChoice?.type === "function" ? toolChoice?.function?.name : null;
+  return name ? ` You MUST call the ${name} tool before answering.` : "";
 }
 
 function encodeHistoryMessage(message) {
@@ -104,22 +133,28 @@ function encodeHistoryMessage(message) {
   return agentMessage(1, agentMessage(1, agentMessage(1, text)));
 }
 
-export function buildAgentRunFrame(messages, model, tools = []) {
+export function buildAgentRunFrame(messages, model, tools = [], toolChoice = "auto") {
   const system = messages
     .filter((message) => message?.role === "system")
     .map((message) => textFromContent(message.content))
     .filter(Boolean)
     .join("\n\n");
+  const hasToolHistory = messages.some((message) => message?.role === "tool" || message?.tool_calls?.length);
   const chatMessages = messages.filter((message) => message?.role !== "system");
   const currentIndex = [...chatMessages].map((message) => message?.role).lastIndexOf("user");
   const current = currentIndex >= 0 ? chatMessages[currentIndex] : chatMessages.at(-1);
-  const history = chatMessages
+  const history = hasToolHistory ? [] : chatMessages
     .slice(0, currentIndex >= 0 ? currentIndex : -1)
     .map(encodeHistoryMessage)
     .filter(Boolean);
-  const userText = textFromContent(current?.content) || "Continue.";
+  const selectedTools = selectAgentTools(tools, toolChoice);
+  const toolPrompt = selectedTools.length
+    ? `You are serving an OpenAI-compatible API with executable tools. When a tool is needed, issue the actual tool call instead of narrating intent.${toolDirective(toolChoice)}`
+    : "";
+  const userText = hasToolHistory
+    ? `${toolPrompt ? `${toolPrompt}\n\n` : ""}Continue this conversation using the tool results below.\n\n${flattenAgentMessages(messages)}`
+    : `${toolPrompt ? `${toolPrompt}\n\n` : ""}${textFromContent(current?.content) || "Continue."}`;
 
-  // agent.v1.UserMessageAction.user_message and its optional history.
   const userMessage = concatBuffers(
     agentString(1, userText),
     agentString(2, crypto.randomUUID()),
@@ -134,21 +169,22 @@ export function buildAgentRunFrame(messages, model, tools = []) {
   const conversationAction = agentMessage(1, userAction);
   const requestedModel = concatBuffers(agentString(1, model), agentBool(7, true));
   const runRequest = concatBuffers(
-    // An empty ConversationStateStructure starts a fresh local agent session.
     agentMessage(1, new Uint8Array()),
     agentMessage(2, conversationAction),
     ...(system ? [agentString(8, system)] : []),
-    ...(tools.length ? [agentMessage(4, encodeMcpTools(tools))] : []),
+    ...(selectedTools.length ? [agentMessage(4, encodeMcpTools(selectedTools))] : []),
     agentMessage(9, requestedModel),
   );
-
-  // agent.v1.AgentClientMessage.run_request.
   return wrapConnectRPCFrame(agentMessage(1, runRequest));
 }
 
-function extractAgentString(message, field) {
+function fieldString(message, field) {
   const value = message?.get(field)?.[0]?.value;
-  return value ? Buffer.from(value).toString("utf8") : "";
+  return value instanceof Uint8Array ? Buffer.from(value).toString("utf8") : "";
+}
+
+function extractAgentString(message, field) {
+  return fieldString(message, field);
 }
 
 function decodeAgentFrames(buffer, onFrame) {
@@ -156,24 +192,69 @@ function decodeAgentFrames(buffer, onFrame) {
   while (pending.length >= 5) {
     const flags = pending[0];
     const length = pending.readUInt32BE(1);
+    if (length > 16 * 1024 * 1024) throw new Error(`Cursor AgentService frame too large: ${length}`);
     if (pending.length < 5 + length) break;
     let payload = pending.subarray(5, 5 + length);
     pending = pending.subarray(5 + length);
-    if (flags & COMPRESS_FLAG.GZIP) {
-      payload = zlib.gunzipSync(payload);
-    }
+    if (flags & COMPRESS_FLAG.GZIP) payload = zlib.gunzipSync(payload);
     if (!(flags & COMPRESS_FLAG.TRAILER)) onFrame(payload);
   }
   return pending;
 }
 
-function createRequestContextResponse() {
-  // AgentService asks every run for client context. 9router has no IDE file
-  // context, so acknowledge with an empty RequestContext.
+function createRequestContextResponse(execMsgId = 0, execId = "") {
   const requestContextSuccess = agentMessage(1, new Uint8Array());
   const requestContextResult = agentMessage(1, requestContextSuccess);
-  const execClientMessage = agentMessage(10, requestContextResult);
+  const execClientMessage = concatBuffers(
+    agentVarint(1, execMsgId),
+    ...(execId ? [agentString(15, execId)] : []),
+    agentMessage(10, requestContextResult),
+  );
   return wrapConnectRPCFrame(agentMessage(2, execClientMessage));
+}
+
+export function decodeCursorAgentExecEvent(serverMessage) {
+  if (!serverMessage?.has(2)) return null;
+  const exec = decodeMessage(serverMessage.get(2)[0].value);
+  const execMsgId = Number(exec.get(1)?.[0]?.value || 0);
+  const execId = fieldString(exec, 15);
+  if (exec.has(10)) return { kind: "context", execMsgId, execId };
+  if (exec.has(11)) {
+    const decoded = decodeMcpArgs(exec.get(11)[0].value);
+    return {
+      kind: "mcp",
+      execMsgId,
+      execId,
+      name: decoded.toolName || decoded.name,
+      callId: decoded.toolCallId,
+      args: decoded.args,
+    };
+  }
+  const builtins = new Map([[2, "shell"], [7, "read"], [8, "list"], [14, "shell"]]);
+  for (const [field, kind] of builtins) {
+    if (!exec.has(field)) continue;
+    const args = decodeMessage(exec.get(field)[0].value);
+    return { kind: "builtin", builtin: kind, execMsgId, execId, value: fieldString(args, 1), cwd: fieldString(args, 2) };
+  }
+  return { kind: "unsupported", fields: [...exec.keys()] };
+}
+
+function bridgeBuiltin(event, tools) {
+  const candidates = event.builtin === "read" ? ["read", "read_file"]
+    : event.builtin === "list" ? ["glob", "list_files"]
+    : ["bash", "shell", "run_terminal_cmd"];
+  const tool = tools.find((candidate) => candidates.includes((candidate?.function?.name || candidate?.name || "").toLowerCase()));
+  if (!tool || !event.value) return null;
+  const name = tool?.function?.name || tool.name;
+  const properties = tool?.function?.parameters?.properties || tool?.inputSchema?.properties || {};
+  const keys = event.builtin === "read" ? ["filePath", "path", "file_path"]
+    : event.builtin === "list" ? ["pattern", "path"] : ["command", "cmd"];
+  const key = keys.find((candidate) => properties[candidate]);
+  if (!key) return null;
+  const args = { [key]: event.value };
+  const cwdKey = ["workdir", "cwd", "workingDirectory", "working_directory"].find((candidate) => properties[candidate]);
+  if (cwdKey && event.cwd) args[cwdKey] = event.cwd;
+  return { name, args };
 }
 
 const CURSOR_STREAM_DEBUG = process.env.CURSOR_STREAM_DEBUG === "1";
@@ -503,7 +584,7 @@ export class CursorExecutor extends BaseExecutor {
     let session;
     try {
       session = this.openAgentHttp2Stream(url, headers, requestController.signal);
-      session.write(buildAgentRunFrame(body.messages || [], model, body.tools || []));
+      session.write(buildAgentRunFrame(body.messages || [], model, body.tools || [], body.tool_choice));
     } catch (error) {
       throw new Error(`Cursor AgentService request failed: ${error.message}`);
     }
@@ -546,7 +627,13 @@ export class CursorExecutor extends BaseExecutor {
     let pending = Buffer.alloc(0);
     let finished = false;
 
+    const selectedTools = selectAgentTools(body.tools || [], body.tool_choice);
     const consume = async (onEvent) => {
+      let emitted = false;
+      const emit = (event) => {
+        emitted = true;
+        onEvent(event);
+      };
       try {
         while (!finished) {
           const { done, value } = await session.read();
@@ -555,59 +642,87 @@ export class CursorExecutor extends BaseExecutor {
           pending = decodeAgentFrames(pending, (payload) => {
             if (finished) return;
             const serverMessage = decodeMessage(payload);
-
-            // agent.v1.AgentServerMessage.interaction_update
             if (serverMessage.has(1)) {
               const update = decodeMessage(serverMessage.get(1)[0].value);
               if (update.has(1)) {
                 const textDelta = extractAgentString(decodeMessage(update.get(1)[0].value), 1);
-                if (textDelta) onEvent({ type: "text", value: textDelta });
+                if (textDelta) emit({ type: "text", value: textDelta });
               }
-              // Cursor's AgentService emits internal reasoning without the
-              // cryptographic signature required by Anthropic thinking blocks.
-              // Forwarding it makes strict Anthropic clients (Claude Code)
-              // discard or wait on an otherwise complete response. Keep the
-              // reasoning upstream-only and emit the normal answer text.
               if (update.has(14)) {
                 finished = true;
-                onEvent({ type: "done" });
+                emit({ type: "done" });
               }
             }
 
-            // AgentService requests IDE context before producing a response.
-            // Return an empty context; 9router is not coupled to an editor.
-            if (serverMessage.has(2)) {
-              const execRequest = decodeMessage(serverMessage.get(2)[0].value);
-              if (execRequest.has(10)) {
-                session.write(createRequestContextResponse());
-              } else {
-                debugLog(`[CURSOR AGENT] Unsupported exec request fields: ${[...execRequest.keys()].join(",")}`);
+            const execEvent = decodeCursorAgentExecEvent(serverMessage);
+            if (execEvent?.kind === "context") {
+              session.write(createRequestContextResponse(execEvent.execMsgId, execEvent.execId));
+            } else if (execEvent?.kind === "mcp") {
+              if (!execEvent.name) {
                 finished = true;
-                onEvent({ type: "error", value: "Cursor AgentService requested an unsupported IDE tool" });
+                emit({ type: "error", value: "Cursor AgentService returned a tool call without a name" });
+                emit({ type: "done" });
+                return;
               }
+              finished = true;
+              emit({
+                type: "tool_call",
+                value: {
+                  id: `call_${crypto.randomUUID().replaceAll("-", "")}`,
+                  type: "function",
+                  function: { name: execEvent.name, arguments: JSON.stringify(execEvent.args || {}) },
+                },
+              });
+              emit({ type: "done" });
+            } else if (execEvent?.kind === "builtin") {
+              const bridged = bridgeBuiltin(execEvent, selectedTools);
+              if (bridged) {
+                finished = true;
+                emit({
+                  type: "tool_call",
+                  value: {
+                    id: `call_${crypto.randomUUID().replaceAll("-", "")}`,
+                    type: "function",
+                    function: { name: bridged.name, arguments: JSON.stringify(bridged.args) },
+                  },
+                });
+                emit({ type: "done" });
+              } else {
+                finished = true;
+                emit({ type: "error", value: `Cursor requested unsupported built-in ${execEvent.builtin}` });
+                emit({ type: "done" });
+              }
+            } else if (execEvent?.kind === "unsupported") {
+              debugLog(`[CURSOR AGENT] Unsupported exec request fields: ${execEvent.fields.join(",")}`);
+              finished = true;
+              emit({ type: "error", value: "Cursor AgentService requested an unsupported IDE tool" });
+              emit({ type: "done" });
             }
           });
         }
       } finally {
         try { session.end(); } catch {}
         try { session.close(); } catch {}
-        if (!finished) onEvent({ type: "done" });
+        if (!finished) {
+          if (!emitted) onEvent({ type: "error", value: "Cursor AgentService ended without content or tool calls" });
+          onEvent({ type: "done" });
+        }
       }
     };
 
     if (stream === false) {
       let content = "";
-      let reasoning = "";
       let agentError = null;
+      const toolCalls = [];
       await consume((event) => {
         if (event.type === "text") content += event.value;
-        else if (event.type === "thinking") reasoning += event.value;
+        else if (event.type === "tool_call") toolCalls.push(event.value);
         else if (event.type === "error") agentError = event.value;
       });
-      if (agentError) {
+      if (agentError && !content && toolCalls.length === 0) {
         return {
           response: new Response(JSON.stringify({ error: { message: agentError, type: "api_error" } }), {
-            status: HTTP_STATUS.BAD_REQUEST,
+            status: HTTP_STATUS.BAD_GATEWAY,
             headers: { "Content-Type": "application/json" },
           }),
           url,
@@ -616,13 +731,15 @@ export class CursorExecutor extends BaseExecutor {
           responseFormat: FORMATS.OPENAI,
         };
       }
+      const message = { role: "assistant", content: content || null };
+      if (toolCalls.length) message.tool_calls = toolCalls;
       return {
         response: new Response(JSON.stringify({
           id: responseId,
           object: "chat.completion",
           created,
           model,
-          choices: [{ index: 0, message: { role: "assistant", content: content || null, ...(reasoning ? { reasoning_content: reasoning } : {}) }, finish_reason: "stop" }],
+          choices: [{ index: 0, message, finish_reason: toolCalls.length ? "tool_calls" : "stop" }],
           usage: estimateUsage(body, content.length, FORMATS.OPENAI),
         }), { headers: { "Content-Type": "application/json" } }),
         url,
@@ -635,21 +752,31 @@ export class CursorExecutor extends BaseExecutor {
     const encoder = new TextEncoder();
     const responseStream = new ReadableStream({
       start(controller) {
+        let roleEmitted = false;
+        let hasToolCalls = false;
+        let closed = false;
+        const enqueue = (chunk) => { if (!closed) controller.enqueue(encoder.encode(chunk)); };
         consume((event) => {
+          if (closed) return;
           if (event.type === "text") {
-            controller.enqueue(encoder.encode(chatChunkSse({ id: responseId, created, model, delta: { content: event.value } })));
-          } else if (event.type === "thinking") {
-            controller.enqueue(encoder.encode(chatChunkSse({ id: responseId, created, model, delta: { reasoning_content: event.value } })));
+            enqueue(chatChunkSse({ id: responseId, created, model, delta: roleEmitted ? { content: event.value } : { role: "assistant", content: event.value } }));
+            roleEmitted = true;
+          } else if (event.type === "tool_call") {
+            if (!roleEmitted) {
+              enqueue(chatChunkSse({ id: responseId, created, model, delta: { role: "assistant", content: "" } }));
+              roleEmitted = true;
+            }
+            hasToolCalls = true;
+            enqueue(chatChunkSse({ id: responseId, created, model, delta: { tool_calls: [{ index: 0, ...event.value }] } }));
           } else if (event.type === "error") {
-            controller.enqueue(encoder.encode(sseChunk({ error: { message: event.value, type: "api_error" } })));
-            controller.enqueue(encoder.encode(SSE_DONE));
-            controller.close();
+            enqueue(sseChunk({ error: { message: event.value, type: "api_error" } }));
           } else if (event.type === "done") {
-            controller.enqueue(encoder.encode(chatChunkSse({ id: responseId, created, model, delta: {}, finishReason: "stop" })));
-            controller.enqueue(encoder.encode(SSE_DONE));
+            enqueue(chatChunkSse({ id: responseId, created, model, delta: {}, finishReason: hasToolCalls ? "tool_calls" : "stop" }));
+            enqueue(SSE_DONE);
+            closed = true;
             controller.close();
           }
-        }).catch((error) => controller.error(error));
+        }).catch((error) => { if (!closed) controller.error(error); });
       },
       cancel() {
         requestController.abort();
@@ -666,7 +793,7 @@ export class CursorExecutor extends BaseExecutor {
   }
 
   async execute({ model, body, stream, credentials, signal, log, proxyOptions = null }) {
-    if (isAgentTextRequest(body)) {
+    if (isAgentCapableRequest(body)) {
       try {
         return await this.executeAgent({ model, body, stream, credentials, signal });
       } catch (error) {
