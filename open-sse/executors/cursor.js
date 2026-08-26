@@ -19,6 +19,7 @@ import { FORMATS } from "../translator/formats.js";
 import { proxyAwareFetch } from "../utils/proxyFetch.js";
 import zlib from "zlib";
 import crypto from "crypto";
+import { cursorSessionManager } from "../services/cursorSessionManager.js";
 
 // Detect cloud environment
 const isCloudEnv = () => {
@@ -133,7 +134,7 @@ function encodeHistoryMessage(message) {
   return agentMessage(1, agentMessage(1, agentMessage(1, text)));
 }
 
-export function buildAgentRunFrame(messages, model, tools = [], toolChoice = "auto") {
+export function buildAgentRunFrame(messages, model, tools = [], toolChoice = "auto", conversationId = crypto.randomUUID()) {
   const system = messages
     .filter((message) => message?.role === "system")
     .map((message) => textFromContent(message.content))
@@ -174,6 +175,8 @@ export function buildAgentRunFrame(messages, model, tools = [], toolChoice = "au
     agentMessage(2, conversationAction),
     ...(system ? [agentString(8, system)] : []),
     ...(selectedTools.length ? [agentMessage(4, encodeMcpTools(selectedTools))] : []),
+    agentString(5, conversationId),
+    agentString(16, conversationId),
     agentMessage(9, requestedModel),
   );
   return wrapConnectRPCFrame(agentMessage(1, runRequest));
@@ -238,6 +241,40 @@ export function decodeCursorAgentExecEvent(serverMessage) {
     return { kind: "builtin", builtin: kind, execMsgId, execId, value: fieldString(args, 1), cwd: fieldString(args, 2) };
   }
   return { kind: "unsupported", fields: [...exec.keys()] };
+}
+
+export function decodeCursorKvEvent(serverMessage) {
+  if (!serverMessage?.has(4)) return null;
+  const kv = decodeMessage(serverMessage.get(4)[0].value);
+  const id = Number(kv.get(1)?.[0]?.value || 0);
+  const metadata = kv.get(4)?.[0]?.value || null;
+  if (kv.has(2)) {
+    const args = decodeMessage(kv.get(2)[0].value);
+    return { kind: "get", id, blobId: args.get(1)?.[0]?.value || new Uint8Array(), metadata };
+  }
+  if (kv.has(3)) {
+    const args = decodeMessage(kv.get(3)[0].value);
+    return {
+      kind: "set",
+      id,
+      blobId: args.get(1)?.[0]?.value || new Uint8Array(),
+      blobData: args.get(2)?.[0]?.value || new Uint8Array(),
+      metadata,
+    };
+  }
+  return null;
+}
+
+export function encodeCursorKvResult(event, blobData = new Uint8Array()) {
+  const result = event.kind === "get"
+    ? agentMessage(2, agentMessage(1, blobData))
+    : agentMessage(3, new Uint8Array());
+  const kvClient = concatBuffers(
+    ...(event.id ? [agentVarint(1, event.id)] : []),
+    result,
+    ...(event.metadata?.length ? [agentMessage(4, event.metadata)] : []),
+  );
+  return wrapConnectRPCFrame(agentMessage(3, kvClient));
 }
 
 function bridgeBuiltin(event, tools) {
@@ -578,47 +615,68 @@ export class CursorExecutor extends BaseExecutor {
     const url = `${agentEndpoint}${AGENT_RUN_PATH}`;
     const headers = this.buildHeaders(credentials);
     const requestController = new AbortController();
-    if (signal?.addEventListener) {
-      signal.addEventListener("abort", () => requestController.abort(signal.reason), { once: true });
+    if (signal?.addEventListener) signal.addEventListener("abort", () => requestController.abort(signal.reason), { once: true });
+
+    const messages = body.messages || [];
+    const conversationId = typeof body.conversation_id === "string" && body.conversation_id
+      ? body.conversation_id
+      : crypto.randomUUID();
+    const toolResultIds = messages.filter((message) => message?.role === "tool" && message.tool_call_id).map((message) => message.tool_call_id);
+    let cachedSession = toolResultIds.length ? cursorSessionManager.acquire(conversationId) : undefined;
+    if (!cachedSession && toolResultIds.length && !body.conversation_id) cachedSession = cursorSessionManager.findByToolCallIds(toolResultIds);
+    let transport = cachedSession?.transport;
+    let cacheEntry = cachedSession;
+
+    if (cachedSession) {
+      let matched = 0;
+      for (const message of messages) {
+        if (message?.role !== "tool" || !cachedSession.pendingToolCalls.has(message.tool_call_id)) continue;
+        const content = typeof message.content === "string" ? message.content : JSON.stringify(message.content ?? "");
+        if (cursorSessionManager.sendToolResult(cachedSession, message.tool_call_id, content, false)) matched++;
+      }
+      if (!matched) {
+        cursorSessionManager.close(cachedSession);
+        cachedSession = undefined;
+        cacheEntry = undefined;
+        transport = undefined;
+      }
     }
 
-    let session;
-    try {
-      session = this.openAgentHttp2Stream(url, headers, requestController.signal);
-      session.write(buildAgentRunFrame(body.messages || [], model, body.tools || [], body.tool_choice));
-    } catch (error) {
-      throw new Error(`Cursor AgentService request failed: ${error.message}`);
-    }
-
-    let responseHeaders;
-    try {
-      responseHeaders = await session.responseHeaders;
-    } catch (error) {
-      session.close();
-      throw new Error(`Cursor AgentService request failed: ${error.message}`);
-    }
-
-    const status = Number(responseHeaders[":status"] || 0);
-    if (status !== 200) {
-      let errorText = "";
+    if (!transport) {
       try {
-        while (true) {
-          const { done, value } = await session.read();
-          if (done) break;
-          errorText += Buffer.from(value).toString("utf8");
-        }
-      } catch {}
-      session.close();
-      return {
-        response: new Response(JSON.stringify({
-          error: { message: `Cursor AgentService ${status}: ${errorText || "request failed"}`, type: "api_error" },
-        }), { status: status || HTTP_STATUS.SERVER_ERROR, headers: { "Content-Type": "application/json" } }),
-        url,
-        headers,
-        transformedBody: body,
-        responseFormat: FORMATS.OPENAI,
-      };
+        transport = this.openAgentHttp2Stream(url, headers, requestController.signal);
+        transport.write(buildAgentRunFrame(messages, model, body.tools || [], body.tool_choice, conversationId));
+        cacheEntry = cursorSessionManager.open(conversationId, transport, new Map());
+      } catch (error) {
+        throw new Error(`Cursor AgentService request failed: ${error.message}`);
+      }
+
+      let responseHeaders;
+      try {
+        responseHeaders = await transport.responseHeaders;
+      } catch (error) {
+        cursorSessionManager.close(cacheEntry);
+        throw new Error(`Cursor AgentService request failed: ${error.message}`);
+      }
+
+      const status = Number(responseHeaders[":status"] || 0);
+      if (status !== 200) {
+        let errorText = "";
+        try {
+          while (true) {
+            const { done, value } = await transport.read();
+            if (done) break;
+            errorText += Buffer.from(value).toString("utf8");
+          }
+        } catch {}
+        cursorSessionManager.close(cacheEntry);
+        return {
+          response: new Response(JSON.stringify({ error: { message: `Cursor AgentService ${status}: ${errorText || "request failed"}`, type: "api_error" } }), { status: status || HTTP_STATUS.SERVER_ERROR, headers: { "Content-Type": "application/json" } }),
+          url, headers, transformedBody: body, responseFormat: FORMATS.OPENAI,
+        };
+      }
     }
+
 
     // The Claude SSE translator derives Anthropic's message ID by stripping
     // `chatcmpl-`. Keep the remaining ID in Anthropic's required `msg_` form
@@ -627,6 +685,7 @@ export class CursorExecutor extends BaseExecutor {
     const created = Math.floor(Date.now() / 1000);
     let pending = Buffer.alloc(0);
     let finished = false;
+    let retainSession = false;
 
     const selectedTools = selectAgentTools(body.tools || [], body.tool_choice);
     const consume = async (onEvent) => {
@@ -637,12 +696,24 @@ export class CursorExecutor extends BaseExecutor {
       };
       try {
         while (!finished) {
-          const { done, value } = await session.read();
+          const { done, value } = await transport.read();
           if (done) break;
           pending = Buffer.concat([pending, Buffer.from(value)]);
           pending = decodeAgentFrames(pending, (payload) => {
             if (finished) return;
             const serverMessage = decodeMessage(payload);
+            const kvEvent = decodeCursorKvEvent(serverMessage);
+            if (kvEvent?.kind === "get") {
+              const blob = cacheEntry.blobStore.get(Buffer.from(kvEvent.blobId).toString("hex")) || new Uint8Array();
+              transport.write(encodeCursorKvResult(kvEvent, blob));
+            } else if (kvEvent?.kind === "set") {
+              const key = Buffer.from(kvEvent.blobId).toString("hex");
+              if (key && kvEvent.blobData.length <= 8 * 1024 * 1024) {
+                cacheEntry.blobStore.set(key, Buffer.from(kvEvent.blobData));
+                while (cacheEntry.blobStore.size > 128) cacheEntry.blobStore.delete(cacheEntry.blobStore.keys().next().value);
+              }
+              transport.write(encodeCursorKvResult(kvEvent));
+            }
             if (serverMessage.has(1)) {
               const update = decodeMessage(serverMessage.get(1)[0].value);
               if (update.has(1)) {
@@ -657,7 +728,7 @@ export class CursorExecutor extends BaseExecutor {
 
             const execEvent = decodeCursorAgentExecEvent(serverMessage);
             if (execEvent?.kind === "context") {
-              session.write(createRequestContextResponse(execEvent.execMsgId, execEvent.execId));
+              transport.write(createRequestContextResponse(execEvent.execMsgId, execEvent.execId));
             } else if (execEvent?.kind === "mcp") {
               if (!execEvent.name) {
                 finished = true;
@@ -665,11 +736,18 @@ export class CursorExecutor extends BaseExecutor {
                 emit({ type: "done" });
                 return;
               }
+              const callId = `call_${crypto.randomUUID().replaceAll("-", "")}`;
+              retainSession = true;
+              cacheEntry.pendingToolCalls.set(callId, {
+                execMsgId: execEvent.execMsgId,
+                execId: execEvent.execId,
+                toolName: execEvent.name,
+              });
               finished = true;
               emit({
                 type: "tool_call",
                 value: {
-                  id: `call_${crypto.randomUUID().replaceAll("-", "")}`,
+                  id: callId,
                   type: "function",
                   function: { name: execEvent.name, arguments: JSON.stringify(execEvent.args || {}) },
                 },
@@ -702,8 +780,8 @@ export class CursorExecutor extends BaseExecutor {
           });
         }
       } finally {
-        try { session.end(); } catch {}
-        try { session.close(); } catch {}
+        if (retainSession) cursorSessionManager.release(cacheEntry);
+        else cursorSessionManager.close(cacheEntry);
         if (!finished) {
           if (!emitted) onEvent({ type: "error", value: "Cursor AgentService ended without content or tool calls" });
           onEvent({ type: "done" });

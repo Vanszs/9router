@@ -15,6 +15,8 @@ import {
   isAgentCapableRequest,
   buildAgentRunFrame,
   decodeCursorAgentExecEvent,
+  decodeCursorKvEvent,
+  encodeCursorKvResult,
 } from "../../open-sse/executors/cursor.js";
 
 // AgentService (agent.v1) codec tests — validate the production implementation
@@ -199,6 +201,7 @@ describe("Cursor AgentService codec (cursorProtobuf.js)", () => {
 });
 
 describe("Cursor AgentService executor helpers (cursor.js)", () => {
+  const unwrap = (frame) => frame.subarray(5);
   describe("isAgentCapableRequest", () => {
     it("accepts plain text content", () => {
       expect(isAgentCapableRequest({ messages: [{ role: "user", content: "hi" }] })).toBe(true);
@@ -235,7 +238,6 @@ describe("Cursor AgentService executor helpers (cursor.js)", () => {
 
   describe("buildAgentRunFrame", () => {
     // buildAgentRunFrame returns a wrapped Connect-RPC frame (5-byte header + AgentClientMessage).
-    const unwrap = (frame) => frame.subarray(5);
 
     it("encodes a text-only run request with system + model", () => {
       const frame = unwrap(buildAgentRunFrame(
@@ -336,6 +338,32 @@ describe("Cursor AgentService executor helpers (cursor.js)", () => {
         callId: "cursor-call-1",
         args: { city: "Tokyo" },
       });
+    });
+  });
+
+  describe("AgentService cache channel", () => {
+    it("encodes stable conversation and request IDs", () => {
+      const frame = unwrap(buildAgentRunFrame([{ role: "user", content: "hi" }], "gpt-5.2", [], "auto", "conv-cache-1"));
+      const run = decodeMessage(decodeMessage(frame).get(1)[0].value);
+      expect(Buffer.from(run.get(5)[0].value).toString()).toBe("conv-cache-1");
+      expect(Buffer.from(run.get(16)[0].value).toString()).toBe("conv-cache-1");
+    });
+
+    it("round-trips KV get metadata and blob bytes", () => {
+      const blobId = Buffer.from("blob-id");
+      const metadata = Buffer.from("opaque-meta");
+      const kv = Buffer.concat([
+        Buffer.from(encodeField(1, 0, 7)),
+        Buffer.from(encodeField(2, LEN, encodeField(1, LEN, blobId))),
+        Buffer.from(encodeField(4, LEN, metadata)),
+      ]);
+      const event = decodeCursorKvEvent(decodeMessage(encodeField(4, LEN, kv)));
+      expect(event).toMatchObject({ kind: "get", id: 7 });
+      expect(Buffer.from(event.blobId)).toEqual(blobId);
+      const result = decodeMessage(unwrap(encodeCursorKvResult(event, Buffer.from("cached"))));
+      const clientKv = decodeMessage(result.get(3)[0].value);
+      expect(Buffer.from(decodeMessage(clientKv.get(2)[0].value).get(1)[0].value).toString()).toBe("cached");
+      expect(Buffer.from(clientKv.get(4)[0].value)).toEqual(metadata);
     });
   });
 });
