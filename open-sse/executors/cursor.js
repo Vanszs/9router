@@ -139,7 +139,8 @@ export function buildAgentRunFrame(messages, model, tools = [], toolChoice = "au
     .map((message) => textFromContent(message.content))
     .filter(Boolean)
     .join("\n\n");
-  const hasToolHistory = messages.some((message) => message?.role === "tool" || message?.tool_calls?.length);
+  const hasToolResult = messages.some((message) => message?.role === "tool");
+  const hasToolHistory = hasToolResult || messages.some((message) => message?.tool_calls?.length);
   const chatMessages = messages.filter((message) => message?.role !== "system");
   const currentIndex = [...chatMessages].map((message) => message?.role).lastIndexOf("user");
   const current = currentIndex >= 0 ? chatMessages[currentIndex] : chatMessages.at(-1);
@@ -147,12 +148,12 @@ export function buildAgentRunFrame(messages, model, tools = [], toolChoice = "au
     .slice(0, currentIndex >= 0 ? currentIndex : -1)
     .map(encodeHistoryMessage)
     .filter(Boolean);
-  const selectedTools = selectAgentTools(tools, toolChoice);
+  const selectedTools = hasToolResult ? [] : selectAgentTools(tools, toolChoice);
   const toolPrompt = selectedTools.length
     ? `You are serving an OpenAI-compatible API with executable tools. When a tool is needed, issue the actual tool call instead of narrating intent.${toolDirective(toolChoice)}`
     : "";
   const userText = hasToolHistory
-    ? `${toolPrompt ? `${toolPrompt}\n\n` : ""}Continue this conversation using the tool results below.\n\n${flattenAgentMessages(messages)}`
+    ? `Continue this conversation using the tool results below. Do not call the completed tool again; answer from its result.\n\n${flattenAgentMessages(messages)}`
     : `${toolPrompt ? `${toolPrompt}\n\n` : ""}${textFromContent(current?.content) || "Continue."}`;
 
   const userMessage = concatBuffers(

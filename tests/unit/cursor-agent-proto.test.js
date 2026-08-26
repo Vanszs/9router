@@ -271,11 +271,13 @@ describe("Cursor AgentService executor helpers (cursor.js)", () => {
         { role: "tool", tool_call_id: "c1", content: "18C cloudy" },
         { role: "user", content: "thanks" },
       ];
-      const frame = unwrap(buildAgentRunFrame(messages, "gpt-5.2", []));
+      const tools = [{ function: { name: "get_weather", parameters: { type: "object" } } }];
+      const frame = unwrap(buildAgentRunFrame(messages, "gpt-5.2", tools));
       const run = decodeMessage(decodeMessage(frame).get(1)[0].value);
       const action = decodeMessage(run.get(2)[0].value);
       const userAction = decodeMessage(action.get(1)[0].value);
       expect(userAction.has(7)).toBe(false);
+      expect(run.has(4)).toBe(false);
       const userMessage = decodeMessage(userAction.get(1)[0].value);
       const text = Buffer.from(userMessage.get(1)[0].value).toString("utf8");
       expect(text).toContain("[assistant tool call c1] get_weather");
