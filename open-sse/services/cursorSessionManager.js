@@ -4,6 +4,9 @@ import { encodeField, wrapConnectRPCFrame } from "../utils/cursorProtobuf.js";
 const LEN = 2;
 const VARINT = 0;
 const DEFAULT_IDLE_TTL_MS = 5 * 60 * 1000;
+const DEFAULT_MAX_SESSION_BLOB_BYTES = 16 * 1024 * 1024;
+const DEFAULT_MAX_GLOBAL_BLOB_BYTES = 128 * 1024 * 1024;
+const MAX_TOOL_RESULT_BYTES = 2 * 1024 * 1024;
 
 function concat(...parts) {
   return Buffer.concat(parts.map((part) => Buffer.from(part)));
@@ -20,17 +23,31 @@ export function encodeExecMcpResult(execMsgId, execId, content, isError = false)
 }
 
 export class CursorSessionManager {
-  constructor({ idleTtlMs = DEFAULT_IDLE_TTL_MS, maxSessions = 100 } = {}) {
+  constructor({
+    idleTtlMs = DEFAULT_IDLE_TTL_MS,
+    maxSessions = 100,
+    maxSessionBlobBytes = DEFAULT_MAX_SESSION_BLOB_BYTES,
+    maxGlobalBlobBytes = DEFAULT_MAX_GLOBAL_BLOB_BYTES,
+  } = {}) {
     this.idleTtlMs = idleTtlMs;
     this.maxSessions = maxSessions;
+    this.maxSessionBlobBytes = maxSessionBlobBytes;
+    this.maxGlobalBlobBytes = maxGlobalBlobBytes;
+    this.globalBlobBytes = 0;
     this.sessions = new Map();
   }
 
   open(conversationId, transport, blobStore = new Map()) {
     const existing = this.sessions.get(conversationId);
     if (existing) this.close(existing);
-    const session = { conversationId, transport, blobStore, pendingToolCalls: new Map(), state: "running", lastActivityTs: Date.now(), idleTimer: null };
+    const session = { conversationId, transport, blobStore: new Map(), blobBytes: 0, pendingToolCalls: new Map(), state: "running", lastActivityTs: Date.now(), idleTimer: null };
     this.sessions.set(conversationId, session);
+    for (const [key, data] of blobStore) {
+      if (!this.storeBlob(session, key, data)) {
+        this.close(session);
+        throw new Error("Cursor session blobs exceed memory limits");
+      }
+    }
     this.enforceLimit();
     return session;
   }
@@ -58,10 +75,31 @@ export class CursorSessionManager {
     }
     return undefined;
   }
+  storeBlob(session, key, data) {
+    const value = Buffer.from(data);
+    const previous = session.blobStore.get(key);
+    const delta = value.length - (previous?.length || 0);
+    if (value.length > this.maxSessionBlobBytes || session.blobBytes + delta > this.maxSessionBlobBytes) return false;
+    while (this.globalBlobBytes + delta > this.maxGlobalBlobBytes) {
+      const oldest = [...this.sessions.values()]
+        .filter((candidate) => candidate !== session)
+        .sort((a, b) => a.lastActivityTs - b.lastActivityTs)[0];
+      if (!oldest) return false;
+      this.close(oldest);
+    }
+    session.blobStore.set(key, value);
+    session.blobBytes += delta;
+    this.globalBlobBytes += delta;
+    return true;
+  }
+
 
   sendToolResult(session, toolCallId, content, isError = false) {
     const pending = session.pendingToolCalls.get(toolCallId);
     if (!pending) return false;
+    if (Buffer.byteLength(content, "utf8") > MAX_TOOL_RESULT_BYTES) {
+      throw new Error("Cursor tool result exceeds the 2 MiB limit");
+    }
     try {
       session.transport.write(encodeExecMcpResult(pending.execMsgId, pending.execId, content, isError));
       session.pendingToolCalls.delete(toolCallId);
@@ -85,6 +123,8 @@ export class CursorSessionManager {
     session.state = "closed";
     this.clearTimer(session);
     session.pendingToolCalls.clear();
+    this.globalBlobBytes = Math.max(0, this.globalBlobBytes - session.blobBytes);
+    session.blobBytes = 0;
     session.blobStore.clear();
     this.sessions.delete(session.conversationId);
     session.transport.close();
@@ -109,6 +149,7 @@ export class CursorSessionManager {
 
   size() { return this.sessions.size; }
   has(id) { return this.sessions.has(id); }
+  blobBytes() { return this.globalBlobBytes; }
 }
 
 export const cursorSessionManager = new CursorSessionManager();

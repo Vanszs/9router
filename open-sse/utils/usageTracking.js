@@ -385,12 +385,28 @@ export function mergeUsage(prev, next) {
  * Estimate input tokens from request body
  * Calculate total body size for more accurate estimation
  */
+function withoutEmbeddedMedia(value) {
+  if (Array.isArray(value)) return value.map(withoutEmbeddedMedia);
+  if (!value || typeof value !== "object") return value;
+  const copy = {};
+  for (const [key, item] of Object.entries(value)) {
+    if ((key === "image_url" || key === "url") && typeof item === "string" && item.startsWith("data:")) {
+      copy[key] = "[embedded image]";
+    } else if (key === "data" && typeof item === "string" && item.length > 1024) {
+      copy[key] = "[embedded media]";
+    } else {
+      copy[key] = withoutEmbeddedMedia(item);
+    }
+  }
+  return copy;
+}
+
 export function estimateInputTokens(body) {
   if (!body || typeof body !== "object") return 0;
 
   try {
     // Calculate total body size (includes messages, tools, system, thinking config, etc.)
-    const bodyStr = JSON.stringify(body);
+    const bodyStr = JSON.stringify(withoutEmbeddedMedia(body));
     const totalChars = bodyStr.length;
 
     // Estimate: ~4 chars per token (rough average across all tokenizers)

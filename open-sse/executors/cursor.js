@@ -17,6 +17,8 @@ import { SSE_DONE, SSE_HEADERS } from "../utils/sseConstants.js";
 import { chatChunkSse, sseChunk } from "../utils/sse.js";
 import { FORMATS } from "../translator/formats.js";
 import { proxyAwareFetch } from "../utils/proxyFetch.js";
+import { fetchImageAsBase64, parseDataUri } from "../translator/concerns/image.js";
+import { IMAGE_SIGNATURES } from "../config/mediaConfig.js";
 import zlib from "zlib";
 import crypto from "crypto";
 import { cursorSessionManager } from "../services/cursorSessionManager.js";
@@ -64,6 +66,58 @@ const agentString = (field, value) => encodeField(field, PROTOBUF_LEN, value);
 const agentMessage = (field, value) => encodeField(field, PROTOBUF_LEN, value);
 const agentVarint = (field, value) => encodeField(field, PROTOBUF_VARINT, value);
 const agentBool = (field, value) => encodeField(field, PROTOBUF_VARINT, value ? 1 : 0);
+const MAX_CURSOR_IMAGES = 12;
+const MAX_CURSOR_IMAGE_BYTES = 1024 * 1024;
+const MAX_CURSOR_IMAGE_TOTAL_BYTES = 8 * 1024 * 1024;
+
+function detectCursorImageMime(data) {
+  for (const { sig, offset, mime, verifyWebp } of IMAGE_SIGNATURES) {
+    if (!["image/png", "image/jpeg", "image/gif", "image/webp"].includes(mime) || data.length < offset + sig.length) continue;
+    if (!sig.every((byte, index) => data[offset + index] === byte)) continue;
+    if (verifyWebp && Buffer.from(data.subarray(8, 12)).toString() !== "WEBP") continue;
+    return mime;
+  }
+  return null;
+}
+
+function encodeSelectedImage(image, blobStore) {
+  const blobId = crypto.createHash("sha256").update(image.data).digest();
+  blobStore.set(blobId.toString("hex"), image.data);
+  const ext = image.mimeType === "image/jpeg" ? "jpg" : image.mimeType.split("/")[1];
+  const blobWithData = concatBuffers(agentMessage(1, blobId), agentMessage(2, image.data));
+  return concatBuffers(
+    agentString(2, image.uuid),
+    agentString(3, `attachment-${image.uuid}.${ext}`),
+    agentString(7, image.mimeType),
+    agentMessage(9, blobWithData),
+  );
+}
+
+async function resolveAgentImages(messages, signal) {
+  const urls = messages
+    .filter((message) => message?.role === "user" && Array.isArray(message.content))
+    .flatMap((message) => message.content)
+    .filter((part) => part?.type === "image_url")
+    .map((part) => typeof part.image_url === "string" ? part.image_url : part.image_url?.url)
+    .filter(Boolean);
+  if (urls.length > MAX_CURSOR_IMAGES) throw new Error(`Cursor accepts at most ${MAX_CURSOR_IMAGES} images per request`);
+  const images = [];
+  let totalBytes = 0;
+  for (const url of urls) {
+    const remote = /^https?:\/\//i.test(url) ? await fetchImageAsBase64(url, { signal, maxBytes: MAX_CURSOR_IMAGE_BYTES }) : null;
+    const parsed = parseDataUri(remote?.url || url);
+    if (!parsed) throw new Error("Cursor image must be a valid data URI or public HTTP(S) image");
+    const estimatedBytes = Math.floor(parsed.base64.replace(/\s/g, "").length * 3 / 4);
+    if (estimatedBytes > MAX_CURSOR_IMAGE_BYTES) throw new Error("Cursor image exceeds 1 MiB");
+    const data = Buffer.from(parsed.base64, "base64");
+    const mimeType = detectCursorImageMime(data);
+    if (!mimeType || data.length === 0 || data.length > MAX_CURSOR_IMAGE_BYTES) throw new Error("Cursor image is invalid, unsupported, or exceeds 1 MiB");
+    totalBytes += data.length;
+    if (totalBytes > MAX_CURSOR_IMAGE_TOTAL_BYTES) throw new Error("Cursor images exceed the 8 MiB request limit");
+    images.push({ data, mimeType, uuid: crypto.randomUUID() });
+  }
+  return images;
+}
 
 function textFromContent(content) {
   if (typeof content === "string") return content;
@@ -80,7 +134,7 @@ export function isAgentCapableRequest(body) {
     if (message?.tool_calls !== undefined && !Array.isArray(message.tool_calls)) return false;
     return message?.content == null
       || typeof message.content === "string"
-      || Array.isArray(message.content) && message.content.every((part) => part?.type === "text");
+      || Array.isArray(message.content) && message.content.every((part) => part?.type === "text" || part?.type === "image_url");
   });
 }
 
@@ -134,7 +188,7 @@ function encodeHistoryMessage(message) {
   return agentMessage(1, agentMessage(1, agentMessage(1, text)));
 }
 
-export function buildAgentRunFrame(messages, model, tools = [], toolChoice = "auto", conversationId = crypto.randomUUID()) {
+export function buildAgentRunFrame(messages, model, tools = [], toolChoice = "auto", conversationId = crypto.randomUUID(), images = [], blobStore = new Map()) {
   const system = messages
     .filter((message) => message?.role === "system")
     .map((message) => textFromContent(message.content))
@@ -157,9 +211,12 @@ export function buildAgentRunFrame(messages, model, tools = [], toolChoice = "au
     ? `Continue this conversation using the tool results below. Do not call the completed tool again; answer from its result.\n\n${flattenAgentMessages(messages)}`
     : `${toolPrompt ? `${toolPrompt}\n\n` : ""}${textFromContent(current?.content) || "Continue."}`;
 
+  const selectedImages = images.map((image) => agentMessage(1, encodeSelectedImage(image, blobStore)));
   const userMessage = concatBuffers(
     agentString(1, userText),
     agentString(2, crypto.randomUUID()),
+    agentMessage(3, concatBuffers(...selectedImages)),
+    agentVarint(4, 1),
   );
   const conversationHistory = history.length
     ? concatBuffers(...history.map((entry) => agentMessage(1, entry)))
@@ -514,7 +571,7 @@ export class CursorExecutor extends BaseExecutor {
    * AgentService (agent.api5.cursor.sh) is HTTP/2-only. Node's fetch/undici speaks
    * HTTP/1.1 and fails with HTTPParserError on the h2 preface — use http2 duplex.
    */
-  openAgentHttp2Stream(url, headers, signal) {
+  openAgentHttp2Stream(url, headers) {
     if (!http2) {
       throw new Error("HTTP/2 is required for Cursor AgentService (endpoint is h2-only)");
     }
@@ -566,14 +623,8 @@ export class CursorExecutor extends BaseExecutor {
       wake({ value: undefined, done: true });
     });
 
-    if (signal) {
-      const onAbort = () => {
-        fail(new Error("Request aborted"));
-        close();
-      };
-      if (signal.aborted) onAbort();
-      else signal.addEventListener("abort", onAbort, { once: true });
-    }
+    // Caller cancellation is managed by executeAgent. Retained streams must
+    // outlive the HTTP request that surfaced their tool call.
 
     const responseHeaders = new Promise((resolve, reject) => {
       const onEarlyError = (error) => reject(error);
@@ -615,7 +666,13 @@ export class CursorExecutor extends BaseExecutor {
     const url = `${agentEndpoint}${AGENT_RUN_PATH}`;
     const headers = this.buildHeaders(credentials);
     const requestController = new AbortController();
-    if (signal?.addEventListener) signal.addEventListener("abort", () => requestController.abort(signal.reason), { once: true });
+    let cacheOwnsTransport = false;
+    let cacheEntry;
+    const onRequestAbort = () => {
+      requestController.abort(signal?.reason);
+      if (!cacheOwnsTransport && cacheEntry) cursorSessionManager.close(cacheEntry);
+    };
+    if (signal?.addEventListener) signal.addEventListener("abort", onRequestAbort, { once: true });
 
     const messages = body.messages || [];
     const conversationId = typeof body.conversation_id === "string" && body.conversation_id
@@ -625,7 +682,7 @@ export class CursorExecutor extends BaseExecutor {
     let cachedSession = toolResultIds.length ? cursorSessionManager.acquire(conversationId) : undefined;
     if (!cachedSession && toolResultIds.length && !body.conversation_id) cachedSession = cursorSessionManager.findByToolCallIds(toolResultIds);
     let transport = cachedSession?.transport;
-    let cacheEntry = cachedSession;
+    cacheEntry = cachedSession;
 
     if (cachedSession) {
       let matched = 0;
@@ -644,9 +701,11 @@ export class CursorExecutor extends BaseExecutor {
 
     if (!transport) {
       try {
-        transport = this.openAgentHttp2Stream(url, headers, requestController.signal);
-        transport.write(buildAgentRunFrame(messages, model, body.tools || [], body.tool_choice, conversationId));
-        cacheEntry = cursorSessionManager.open(conversationId, transport, new Map());
+        const blobStore = new Map();
+        const images = await resolveAgentImages(messages, requestController.signal);
+        transport = this.openAgentHttp2Stream(url, headers);
+        transport.write(buildAgentRunFrame(messages, model, body.tools || [], body.tool_choice, conversationId, images, blobStore));
+        cacheEntry = cursorSessionManager.open(conversationId, transport, blobStore);
       } catch (error) {
         throw new Error(`Cursor AgentService request failed: ${error.message}`);
       }
@@ -709,8 +768,7 @@ export class CursorExecutor extends BaseExecutor {
             } else if (kvEvent?.kind === "set") {
               const key = Buffer.from(kvEvent.blobId).toString("hex");
               if (key && kvEvent.blobData.length <= 8 * 1024 * 1024) {
-                cacheEntry.blobStore.set(key, Buffer.from(kvEvent.blobData));
-                while (cacheEntry.blobStore.size > 128) cacheEntry.blobStore.delete(cacheEntry.blobStore.keys().next().value);
+                cursorSessionManager.storeBlob(cacheEntry, key, kvEvent.blobData);
               }
               transport.write(encodeCursorKvResult(kvEvent));
             }
@@ -780,8 +838,13 @@ export class CursorExecutor extends BaseExecutor {
           });
         }
       } finally {
-        if (retainSession) cursorSessionManager.release(cacheEntry);
-        else cursorSessionManager.close(cacheEntry);
+        if (retainSession && !requestController.signal.aborted) {
+          cacheOwnsTransport = true;
+          cursorSessionManager.release(cacheEntry);
+        } else {
+          cursorSessionManager.close(cacheEntry);
+        }
+        if (signal?.removeEventListener) signal.removeEventListener("abort", onRequestAbort);
         if (!finished) {
           if (!emitted) onEvent({ type: "error", value: "Cursor AgentService ended without content or tool calls" });
           onEvent({ type: "done" });

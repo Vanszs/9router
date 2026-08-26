@@ -226,8 +226,8 @@ describe("Cursor AgentService executor helpers (cursor.js)", () => {
       })).toBe(true);
     });
 
-    it("rejects non-text (image) content", () => {
-      expect(isAgentCapableRequest({ messages: [{ role: "user", content: [{ type: "image_url" }] }] })).toBe(false);
+    it("accepts OpenAI image_url content", () => {
+      expect(isAgentCapableRequest({ messages: [{ role: "user", content: [{ type: "image_url", image_url: { url: "data:image/png;base64,AA==" } }] }] })).toBe(true);
     });
 
     it("rejects missing messages", () => {
@@ -264,6 +264,24 @@ describe("Cursor AgentService executor helpers (cursor.js)", () => {
       const frame = unwrap(buildAgentRunFrame([{ role: "user", content: "hi" }], "gpt-5.2", []));
       const run = decodeMessage(decodeMessage(frame).get(1)[0].value);
       expect(run.has(4)).toBe(false);
+    });
+
+    it("encodes selected images with inline blob data", () => {
+      const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+      const blobs = new Map();
+      const frame = unwrap(buildAgentRunFrame(
+        [{ role: "user", content: [{ type: "text", text: "describe" }, { type: "image_url", image_url: { url: "unused" } }] }],
+        "gpt-5.2", [], "auto", "conv-vision", [{ data: png, mimeType: "image/png", uuid: "image-1" }], blobs,
+      ));
+      const run = decodeMessage(decodeMessage(frame).get(1)[0].value);
+      const action = decodeMessage(run.get(2)[0].value);
+      const userAction = decodeMessage(action.get(1)[0].value);
+      const userMessage = decodeMessage(userAction.get(1)[0].value);
+      const context = decodeMessage(userMessage.get(3)[0].value);
+      const image = decodeMessage(context.get(1)[0].value);
+      expect(Buffer.from(image.get(7)[0].value).toString()).toBe("image/png");
+      expect(Buffer.from(decodeMessage(image.get(9)[0].value).get(2)[0].value)).toEqual(png);
+      expect(blobs.size).toBe(1);
     });
 
     it("cold-resumes tool history inside current user text", () => {
