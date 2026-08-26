@@ -64,16 +64,10 @@ function detectImageMime(buf) {
 }
 
 /**
- * Fetch a remote image URL and return it as a base64 data URI.
- * Hardened against SSRF (private/metadata IPs), memory DoS (size cap),
- * and disguised non-image payloads (magic-byte verification).
+ * Fetch validated remote image bytes with DNS pinning and hard size limits.
  * Returns null on any failure or rejection.
- *
- * @param {string} imageUrl - HTTP(S) URL of the image
- * @param {object} options - { signal, timeoutMs, maxBytes }
- * @returns {Promise<{url: string, mimeType: string}|null>}
  */
-export async function fetchImageAsBase64(imageUrl, options = {}) {
+export async function fetchImageBytes(imageUrl, options = {}) {
   const { signal, timeoutMs = FETCH_TIMEOUT_MS, maxBytes = MAX_IMAGE_BYTES } = options;
   if (!imageUrl || (!imageUrl.startsWith("http://") && !imageUrl.startsWith("https://"))) {
     return null;
@@ -114,11 +108,17 @@ export async function fetchImageAsBase64(imageUrl, options = {}) {
     const mimeType = detectImageMime(buf);
     if (!mimeType) return null; // not a recognized image — reject disguised payloads
 
-    return { url: `data:${mimeType};base64,${buf.toString("base64")}`, mimeType };
+    return { data: buf, mimeType };
   } catch {
     return null;
   } finally {
     if (timeout) clearTimeout(timeout);
     dispatcher.close().catch(() => {});
   }
+}
+
+/** Backward-compatible data-URI adapter for existing translators. */
+export async function fetchImageAsBase64(imageUrl, options = {}) {
+  const image = await fetchImageBytes(imageUrl, options);
+  return image ? { url: `data:${image.mimeType};base64,${image.data.toString("base64")}`, mimeType: image.mimeType } : null;
 }

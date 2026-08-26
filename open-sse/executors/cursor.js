@@ -17,7 +17,7 @@ import { SSE_DONE, SSE_HEADERS } from "../utils/sseConstants.js";
 import { chatChunkSse, sseChunk } from "../utils/sse.js";
 import { FORMATS } from "../translator/formats.js";
 import { proxyAwareFetch } from "../utils/proxyFetch.js";
-import { fetchImageAsBase64, parseDataUri } from "../translator/concerns/image.js";
+import { fetchImageBytes, parseDataUri } from "../translator/concerns/image.js";
 import { IMAGE_SIGNATURES } from "../config/mediaConfig.js";
 import zlib from "zlib";
 import crypto from "crypto";
@@ -104,13 +104,20 @@ async function resolveAgentImages(messages, signal) {
   const images = [];
   let totalBytes = 0;
   for (const url of urls) {
-    const remote = /^https?:\/\//i.test(url) ? await fetchImageAsBase64(url, { signal, maxBytes: MAX_CURSOR_IMAGE_BYTES }) : null;
-    const parsed = parseDataUri(remote?.url || url);
-    if (!parsed) throw new Error("Cursor image must be a valid data URI or public HTTP(S) image");
-    const estimatedBytes = Math.floor(parsed.base64.replace(/\s/g, "").length * 3 / 4);
-    if (estimatedBytes > MAX_CURSOR_IMAGE_BYTES) throw new Error("Cursor image exceeds 1 MiB");
-    const data = Buffer.from(parsed.base64, "base64");
-    const mimeType = detectCursorImageMime(data);
+    const remote = /^https?:\/\//i.test(url) ? await fetchImageBytes(url, { signal, maxBytes: MAX_CURSOR_IMAGE_BYTES }) : null;
+    let data;
+    let mimeType;
+    if (remote) {
+      data = remote.data;
+      mimeType = remote.mimeType;
+    } else {
+      const parsed = parseDataUri(url);
+      if (!parsed || /\s/.test(parsed.base64)) throw new Error("Cursor image must be a valid data URI or public HTTP(S) image");
+      const estimatedBytes = Math.floor(parsed.base64.length * 3 / 4);
+      if (estimatedBytes > MAX_CURSOR_IMAGE_BYTES) throw new Error("Cursor image exceeds 1 MiB");
+      data = Buffer.from(parsed.base64, "base64");
+      mimeType = detectCursorImageMime(data);
+    }
     if (!mimeType || data.length === 0 || data.length > MAX_CURSOR_IMAGE_BYTES) throw new Error("Cursor image is invalid, unsupported, or exceeds 1 MiB");
     totalBytes += data.length;
     if (totalBytes > MAX_CURSOR_IMAGE_TOTAL_BYTES) throw new Error("Cursor images exceed the 8 MiB request limit");
@@ -795,8 +802,7 @@ export class CursorExecutor extends BaseExecutor {
                 return;
               }
               const callId = `call_${crypto.randomUUID().replaceAll("-", "")}`;
-              retainSession = true;
-              cacheEntry.pendingToolCalls.set(callId, {
+              cursorSessionManager.registerToolCall(cacheEntry, callId, {
                 execMsgId: execEvent.execMsgId,
                 execId: execEvent.execId,
                 toolName: execEvent.name,
@@ -814,11 +820,18 @@ export class CursorExecutor extends BaseExecutor {
             } else if (execEvent?.kind === "builtin") {
               const bridged = bridgeBuiltin(execEvent, selectedTools);
               if (bridged) {
+                const callId = `call_${crypto.randomUUID().replaceAll("-", "")}`;
+                retainSession = true;
+                cursorSessionManager.registerToolCall(cacheEntry, callId, {
+                  execMsgId: execEvent.execMsgId,
+                  execId: execEvent.execId,
+                  toolName: bridged.name,
+                });
                 finished = true;
                 emit({
                   type: "tool_call",
                   value: {
-                    id: `call_${crypto.randomUUID().replaceAll("-", "")}`,
+                    id: callId,
                     type: "function",
                     function: { name: bridged.name, arguments: JSON.stringify(bridged.args) },
                   },
@@ -921,7 +934,7 @@ export class CursorExecutor extends BaseExecutor {
         }).catch((error) => { if (!closed) controller.error(error); });
       },
       cancel() {
-        requestController.abort();
+        onRequestAbort();
       },
     });
 
@@ -946,6 +959,7 @@ export class CursorExecutor extends BaseExecutor {
           url: `${PROVIDER_OAUTH.cursor?.agentEndpoint || ""}${AGENT_RUN_PATH}`,
           headers: {},
           transformedBody: body,
+          responseFormat: FORMATS.OPENAI,
         };
       }
     }

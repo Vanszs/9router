@@ -16,7 +16,7 @@ describe("CursorSessionManager", () => {
     const manager = new CursorSessionManager();
     const mock = mockTransport();
     const session = manager.open("conv-1", mock.transport, new Map());
-    session.pendingToolCalls.set("call-1", { execMsgId: 9, execId: "exec-1", toolName: "probe" });
+    manager.registerToolCall(session, "call-1", { execMsgId: 9, execId: "exec-1", toolName: "probe" });
     manager.release(session);
     expect(manager.acquire("conv-1")).toBe(session);
     expect(manager.sendToolResult(session, "call-1", "cached result")).toBe(true);
@@ -29,8 +29,8 @@ describe("CursorSessionManager", () => {
     const manager = new CursorSessionManager();
     const mock = mockTransport();
     const session = manager.open("conv-parallel", mock.transport);
-    session.pendingToolCalls.set("call-a", { execMsgId: 1, execId: "exec-a", toolName: "a" });
-    session.pendingToolCalls.set("call-b", { execMsgId: 2, execId: "exec-b", toolName: "b" });
+    manager.registerToolCall(session, "call-a", { execMsgId: 1, execId: "exec-a", toolName: "a" });
+    manager.registerToolCall(session, "call-b", { execMsgId: 2, execId: "exec-b", toolName: "b" });
     expect(manager.sendToolResult(session, "call-a", "one")).toBe(true);
     expect(manager.sendToolResult(session, "call-b", "two")).toBe(true);
     expect(mock.writes).toHaveLength(2);
@@ -41,7 +41,7 @@ describe("CursorSessionManager", () => {
     const manager = new CursorSessionManager();
     const mock = mockTransport();
     const session = manager.open("conv-large-result", mock.transport);
-    session.pendingToolCalls.set("call-large", { execMsgId: 1, execId: "exec", toolName: "tool" });
+    manager.registerToolCall(session, "call-large", { execMsgId: 1, execId: "exec", toolName: "tool" });
     expect(() => manager.sendToolResult(session, "call-large", "x".repeat(2 * 1024 * 1024 + 1))).toThrow(/2 MiB/);
     expect(mock.writes).toHaveLength(0);
   });
@@ -49,9 +49,12 @@ describe("CursorSessionManager", () => {
   it("finds OpenAI clients without conversation_id by tool call ID", () => {
     const manager = new CursorSessionManager();
     const session = manager.open("generated", mockTransport().transport, new Map());
-    session.pendingToolCalls.set("call-match", { execMsgId: 1, execId: "e", toolName: "probe" });
+    manager.registerToolCall(session, "call-match", { execMsgId: 1, execId: "e", toolName: "probe" });
     manager.release(session);
     expect(manager.findByToolCallIds(["call-match"])).toBe(session);
+    expect(manager.sendToolResult(session, "call-match", "done")).toBe(true);
+    manager.release(session);
+    expect(manager.findByToolCallIds(["call-match"])).toBeUndefined();
   });
 
   it("evicts retained streams after TTL", async () => {

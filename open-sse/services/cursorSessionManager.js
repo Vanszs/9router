@@ -35,6 +35,7 @@ export class CursorSessionManager {
     this.maxGlobalBlobBytes = maxGlobalBlobBytes;
     this.globalBlobBytes = 0;
     this.sessions = new Map();
+    this.toolCallSessions = new Map();
   }
 
   open(conversationId, transport, blobStore = new Map()) {
@@ -65,25 +66,27 @@ export class CursorSessionManager {
   findByToolCallIds(ids) {
     this.evictExpired();
     for (const id of ids) {
-      for (const session of this.sessions.values()) {
-        if (session.state !== "awaiting_tool_result" || !session.pendingToolCalls.has(id)) continue;
-        this.clearTimer(session);
-        session.state = "running";
-        session.lastActivityTs = Date.now();
-        return session;
-      }
+      const session = this.toolCallSessions.get(id);
+      if (!session || session.state !== "awaiting_tool_result" || !session.pendingToolCalls.has(id)) continue;
+      this.clearTimer(session);
+      session.state = "running";
+      session.lastActivityTs = Date.now();
+      return session;
     }
     return undefined;
   }
+
+  registerToolCall(session, toolCallId, pending) {
+    session.pendingToolCalls.set(toolCallId, pending);
+    this.toolCallSessions.set(toolCallId, session);
+  }
   storeBlob(session, key, data) {
-    const value = Buffer.from(data);
+    const value = Buffer.isBuffer(data) ? data : Buffer.from(data);
     const previous = session.blobStore.get(key);
     const delta = value.length - (previous?.length || 0);
     if (value.length > this.maxSessionBlobBytes || session.blobBytes + delta > this.maxSessionBlobBytes) return false;
     while (this.globalBlobBytes + delta > this.maxGlobalBlobBytes) {
-      const oldest = [...this.sessions.values()]
-        .filter((candidate) => candidate !== session)
-        .sort((a, b) => a.lastActivityTs - b.lastActivityTs)[0];
+      const oldest = this.oldestSession(session);
       if (!oldest) return false;
       this.close(oldest);
     }
@@ -103,6 +106,7 @@ export class CursorSessionManager {
     try {
       session.transport.write(encodeExecMcpResult(pending.execMsgId, pending.execId, content, isError));
       session.pendingToolCalls.delete(toolCallId);
+      this.toolCallSessions.delete(toolCallId);
       session.lastActivityTs = Date.now();
       return true;
     } catch {
@@ -122,6 +126,7 @@ export class CursorSessionManager {
     if (!session || session.state === "closed") return;
     session.state = "closed";
     this.clearTimer(session);
+    for (const toolCallId of session.pendingToolCalls.keys()) this.toolCallSessions.delete(toolCallId);
     session.pendingToolCalls.clear();
     this.globalBlobBytes = Math.max(0, this.globalBlobBytes - session.blobBytes);
     session.blobBytes = 0;
@@ -140,11 +145,17 @@ export class CursorSessionManager {
     for (const session of this.sessions.values()) if (session.lastActivityTs < cutoff) this.close(session);
   }
 
-  enforceLimit() {
-    while (this.sessions.size > this.maxSessions) {
-      const oldest = [...this.sessions.values()].sort((a, b) => a.lastActivityTs - b.lastActivityTs)[0];
-      this.close(oldest);
+  oldestSession(exclude) {
+    let oldest;
+    for (const session of this.sessions.values()) {
+      if (session === exclude || oldest && session.lastActivityTs >= oldest.lastActivityTs) continue;
+      oldest = session;
     }
+    return oldest;
+  }
+
+  enforceLimit() {
+    while (this.sessions.size > this.maxSessions) this.close(this.oldestSession());
   }
 
   size() { return this.sessions.size; }
