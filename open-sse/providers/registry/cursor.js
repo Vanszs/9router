@@ -23,7 +23,7 @@ export default {
       "Content-Type": "application/connect+proto",
       "User-Agent": "connect-es/1.6.1",
     },
-    clientVersion: "3.12.17",
+    clientVersion: "cli-2026.07.08-0c04a8a",
   },
   models: [
     { id: "default", name: "Auto (Server Picks)" },
@@ -48,8 +48,8 @@ export default {
     api3Endpoint: "https://api3.cursor.sh",
     agentEndpoint: "https://agent.api5.cursor.sh",
     agentNonPrivacyEndpoint: "https://agentn.api5.cursor.sh",
-    clientVersion: "3.12.17",
-    clientType: "ide",
+    clientVersion: "cli-2026.07.08-0c04a8a",
+    clientType: "cli",
     dbKeys: {
       accessToken: "cursorAuth/accessToken",
       machineId: "storage.serviceMachineId",

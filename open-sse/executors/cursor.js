@@ -97,8 +97,16 @@ async function resolveAgentImages(messages, signal) {
   const urls = messages
     .filter((message) => message?.role === "user" && Array.isArray(message.content))
     .flatMap((message) => message.content)
-    .filter((part) => part?.type === "image_url")
-    .map((part) => typeof part.image_url === "string" ? part.image_url : part.image_url?.url)
+    .map((part) => {
+      if (part?.type === "image_url") {
+        return typeof part.image_url === "string" ? part.image_url : part.image_url?.url;
+      }
+      if (part?.type === "image" && part?.source?.type === "base64" && part.source.data) {
+        const mediaType = part.source.media_type || "image/png";
+        return `data:${mediaType};base64,${part.source.data}`;
+      }
+      return null;
+    })
     .filter(Boolean);
   if (urls.length > MAX_CURSOR_IMAGES) throw new Error(`Cursor accepts at most ${MAX_CURSOR_IMAGES} images per request`);
   const images = [];
@@ -130,19 +138,19 @@ function textFromContent(content) {
   if (typeof content === "string") return content;
   if (!Array.isArray(content)) return "";
   return content
-    .filter((part) => part?.type === "text" && typeof part.text === "string")
-    .map((part) => part.text)
+    .map((part) => {
+      if (typeof part === "string") return part;
+      if (part?.type === "text" && typeof part.text === "string") return part.text;
+      if (part?.type === "text" && typeof part.content === "string") return part.content;
+      if (part?.text && typeof part.text === "string") return part.text;
+      return "";
+    })
+    .filter(Boolean)
     .join("\n");
 }
 
 export function isAgentCapableRequest(body) {
-  return Array.isArray(body?.messages) && body.messages.every((message) => {
-    if (message?.role === "tool") return true;
-    if (message?.tool_calls !== undefined && !Array.isArray(message.tool_calls)) return false;
-    return message?.content == null
-      || typeof message.content === "string"
-      || Array.isArray(message.content) && message.content.every((part) => part?.type === "text" || part?.type === "image_url");
-  });
+  return Array.isArray(body?.messages);
 }
 
 function serializeToolCall(call) {
@@ -947,66 +955,8 @@ export class CursorExecutor extends BaseExecutor {
     };
   }
 
-  async execute({ model, body, stream, credentials, signal, log, proxyOptions = null }) {
-    if (isAgentCapableRequest(body)) {
-      try {
-        return await this.executeAgent({ model, body, stream, credentials, signal });
-      } catch (error) {
-        return {
-          response: new Response(JSON.stringify({
-            error: { message: error.message, type: "connection_error", code: "" },
-          }), { status: HTTP_STATUS.SERVER_ERROR, headers: { "Content-Type": "application/json" } }),
-          url: `${PROVIDER_OAUTH.cursor?.agentEndpoint || ""}${AGENT_RUN_PATH}`,
-          headers: {},
-          transformedBody: body,
-          responseFormat: FORMATS.OPENAI,
-        };
-      }
-    }
-
-    const url = this.buildUrl();
-    const headers = this.buildHeaders(credentials);
-    const transformedBody = this.transformRequest(model, body, stream, credentials);
-
-    try {
-      const shouldForceFetch = proxyOptions?.enabled === true || proxyOptions?.connectionProxyEnabled === true || !!proxyOptions?.vercelRelayUrl;
-      const response = (http2 && !shouldForceFetch)
-        ? await this.makeHttp2Request(url, headers, transformedBody, signal)
-        : await this.makeFetchRequest(url, headers, transformedBody, signal, proxyOptions);
-
-      if (response.status !== 200) {
-        const errorText = response.body?.toString() || "Unknown error";
-        const errorResponse = new Response(JSON.stringify({
-          error: {
-            message: `[${response.status}]: ${errorText}`,
-            type: "invalid_request_error",
-            code: ""
-          }
-        }), {
-          status: response.status,
-          headers: { "Content-Type": "application/json" }
-        });
-        return { response: errorResponse, url, headers, transformedBody: body };
-      }
-
-      const transformedResponse = stream !== false
-        ? this.transformProtobufToSSE(response.body, model, body)
-        : this.transformProtobufToJSON(response.body, model, body);
-
-      return { response: transformedResponse, url, headers, transformedBody: body };
-    } catch (error) {
-      const errorResponse = new Response(JSON.stringify({
-        error: {
-          message: error.message,
-          type: "connection_error",
-          code: ""
-        }
-      }), {
-        status: HTTP_STATUS.SERVER_ERROR,
-        headers: { "Content-Type": "application/json" }
-      });
-      return { response: errorResponse, url, headers, transformedBody: body };
-    }
+  async execute({ model, body, stream, credentials, signal }) {
+    return await this.executeAgent({ model, body, stream, credentials, signal });
   }
 
   transformProtobufToJSON(buffer, model, body) {
