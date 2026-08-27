@@ -3,7 +3,7 @@
  */
 
 import { proxyAwareFetch } from "../../utils/proxyFetch.js";
-import { ANTHROPIC_API_VERSION } from "../../providers/shared.js";
+import { ANTHROPIC_API_VERSION, CLAUDE_CLI_SPOOF_HEADERS } from "../../providers/shared.js";
 import { U, parseResetTime } from "./shared.js";
 
 // Claude API config (urls from registry, apiVersion is header logic kept here)
@@ -73,9 +73,10 @@ async function fetchClaudeUsageRaw(accessToken, proxyOptions = null) {
     const oauthResponse = await proxyAwareFetch(CLAUDE_CONFIG.oauthUsageUrl, {
       method: "GET",
       headers: {
+        ...CLAUDE_CLI_SPOOF_HEADERS,
         "Authorization": `Bearer ${accessToken}`,
-        "anthropic-beta": "oauth-2025-04-20",
-        "anthropic-version": CLAUDE_CONFIG.apiVersion,
+        "Accept": "application/json, text/plain, */*",
+        "Content-Type": "application/json",
       },
     }, proxyOptions);
 
@@ -126,6 +127,13 @@ async function fetchClaudeUsageRaw(accessToken, proxyOptions = null) {
     // Cool down OAuth usage polling after a 429 (quota endpoint only)
     if (oauthResponse.status === 429) {
       oauthCooldown.set(accessToken, Date.now() + OAUTH_429_COOLDOWN_MS);
+    }
+
+    const oauthErrorText = await oauthResponse.text().catch(() => "");
+    if (oauthErrorText.includes("oauth_not_allowed_for_organization")) {
+      return {
+        message: "Claude connected, but this Anthropic organization does not allow OAuth authentication. Ask an org admin to enable Claude Code/OAuth access, or reconnect with a different Claude account.",
+      };
     }
 
     // Fallback: legacy settings + org usage endpoint
