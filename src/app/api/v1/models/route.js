@@ -1,5 +1,5 @@
-import { isValidApiKey, extractApiKey, isProviderAllowed, isComboAllowed, isKindAllowed } from "@/sse/services/auth.js";
-import { getSettings } from "@/lib/localDb";
+import { isValidApiKey, extractApiKey, isProviderAllowed, isComboAllowed, isKindAllowed, isModelAllowed } from "@/sse/services/auth.js";
+import { getSettings, recordApiKeyUsage } from "@/lib/localDb";
 import { stripComboPrefix } from "open-sse/services/combo.js";
 import { buildModelsList } from "@/sse/services/allowedModels.js";
 import { capabilitiesFromServiceKind } from "open-sse/providers/capabilities.js";
@@ -59,6 +59,9 @@ export async function GET(request) {
     let data = await buildModelsList([LLM_KIND], { skipDynamicFetch });
 
     if (apiKeyInfo) {
+      // Record usage for /v1/models query
+      recordApiKeyUsage(apiKeyInfo, 0).catch(() => {});
+
       const allowedOwners = new Map();
       for (const model of data) {
         const isCombo = model.owned_by === "combo";
@@ -74,6 +77,7 @@ export async function GET(request) {
       }
       data = data.filter((model) => {
         if (!isKindAllowed(apiKeyInfo, model.kind || LLM_KIND)) return false;
+        if (!isModelAllowed(apiKeyInfo, model.id)) return false;
         const isCombo = model.owned_by === "combo";
         const key = isCombo
           ? `combo:${stripComboPrefix(model.id)}`

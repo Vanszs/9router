@@ -35,9 +35,20 @@ export default function APIPageClient() {
   const [editKinds, setEditKinds] = useState([]); // selected kinds
   const [editProviders, setEditProviders] = useState([]); // selected provider IDs
   const [editCombos, setEditCombos] = useState([]); // selected combo names
+  const [editModels, setEditModels] = useState(""); // comma or newline separated model patterns
+  const [editExpiresAt, setEditExpiresAt] = useState("");
+  const [editMaxTokens, setEditMaxTokens] = useState("");
+  const [editMaxTokensDaily, setEditMaxTokensDaily] = useState("");
+  const [editRpm, setEditRpm] = useState("");
+  const [editRph, setEditRph] = useState("");
+  const [editRpd, setEditRpd] = useState("");
+  const [editTokens5h, setEditTokens5h] = useState("");
+  const [editTokensWeekly, setEditTokensWeekly] = useState("");
+  const [editTokensMonthly, setEditTokensMonthly] = useState("");
   const [editKindsAll, setEditKindsAll] = useState(true); // null = all
   const [editProvidersAll, setEditProvidersAll] = useState(true);
   const [editCombosAll, setEditCombosAll] = useState(true);
+  const [editModelsAll, setEditModelsAll] = useState(true);
   const [editSaving, setEditSaving] = useState(false);
   const [providerList, setProviderList] = useState([]);
   const [aliasMap, setAliasMap] = useState({}); // alias → provider ID
@@ -455,14 +466,27 @@ export default function APIPageClient() {
   const handleOpenEditKey = async (key) => {
     setEditingKey(key);
     setEditName(key.name || "");
+    setEditExpiresAt(key.expiresAt ? key.expiresAt.slice(0, 16) : "");
+    setEditMaxTokens(key.maxTokens ?? "");
+    setEditMaxTokensDaily(key.maxTokensDaily ?? "");
+    setEditRpm(key.rpm ?? "");
+    setEditRph(key.rph ?? "");
+    setEditRpd(key.rpd ?? "");
+    setEditTokens5h(key.tokens5h ?? "");
+    setEditTokensWeekly(key.tokensWeekly ?? "");
+    setEditTokensMonthly(key.tokensMonthly ?? "");
+    
     const ap = key.allowedProviders;
     const ac = key.allowedCombos;
     const ak = key.allowedKinds;
+    const am = key.allowedModels;
     setEditProvidersAll(!ap);
     setEditCombosAll(!ac);
     setEditKindsAll(!ak);
+    setEditModelsAll(!am);
     setEditCombos(ac || []);
     setEditKinds(ak || []);
+    setEditModels(Array.isArray(am) ? am.join("\n") : "");
 
     // Resolve stored ACL provider values to provider IDs in our list
     // Stored values can be: full provider ID, prefix (e.g. "tr"), or alias (e.g. "oc", "qd", "kc")
@@ -491,11 +515,34 @@ export default function APIPageClient() {
     if (!editingKey) return;
     setEditSaving(true);
     try {
+      const parseNum = (s) => {
+        if (s === "" || s === null || s === undefined) return null;
+        const n = Number(s);
+        return Number.isInteger(n) && n >= 0 ? n : null;
+      };
+
+      const parsedModels = editModelsAll
+        ? null
+        : editModels
+            .split(/[\n,]/)
+            .map((m) => m.trim())
+            .filter(Boolean);
+
       const body = {
         name: editName.trim() || editingKey.name || "",
         allowedProviders: editProvidersAll ? null : editProviders,
         allowedCombos: editCombosAll ? null : editCombos,
         allowedKinds: editKindsAll ? null : editKinds,
+        allowedModels: parsedModels,
+        expiresAt: editExpiresAt ? new Date(editExpiresAt).toISOString() : null,
+        maxTokens: parseNum(editMaxTokens),
+        maxTokensDaily: parseNum(editMaxTokensDaily),
+        rpm: parseNum(editRpm),
+        rph: parseNum(editRph),
+        rpd: parseNum(editRpd),
+        tokens5h: parseNum(editTokens5h),
+        tokensWeekly: parseNum(editTokensWeekly),
+        tokensMonthly: parseNum(editTokensMonthly),
       };
       const res = await fetch(`/api/keys/${editingKey.id}`, {
         method: "PUT",
@@ -1521,8 +1568,53 @@ export default function APIPageClient() {
                    {key.isActive === false && (
                     <p className="text-xs text-orange-500 mt-1">Paused</p>
                   )}
+                  {key.expiresAt && (
+                    <p className="text-xs text-text-muted mt-1">
+                      Expires {new Date(key.expiresAt).toLocaleString()}
+                    </p>
+                  )}
+                  {/* Usage Badges */}
+                  {key.usage && (
+                    <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
+                      {key.usage.rpm?.limit != null && (
+                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-surface-2 text-text-muted font-mono">
+                          RPM: <span className="font-semibold text-text-main">{key.usage.rpm.used}</span>/{key.usage.rpm.limit}
+                        </span>
+                      )}
+                      {key.usage.rph?.limit != null && (
+                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-surface-2 text-text-muted font-mono">
+                          RPH: <span className="font-semibold text-text-main">{key.usage.rph.used}</span>/{key.usage.rph.limit}
+                        </span>
+                      )}
+                      {key.usage.rpd?.limit != null && (
+                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-surface-2 text-text-muted font-mono">
+                          RPD: <span className="font-semibold text-text-main">{key.usage.rpd.used}</span>/{key.usage.rpd.limit}
+                        </span>
+                      )}
+                      {key.usage.maxTokensDaily?.limit != null && (
+                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-surface-2 text-text-muted font-mono">
+                          Daily Tokens: <span className="font-semibold text-text-main">{key.usage.maxTokensDaily.used?.toLocaleString()}</span>/{key.usage.maxTokensDaily.limit?.toLocaleString()}
+                        </span>
+                      )}
+                      {key.usage.tokens5h?.limit != null && (
+                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-surface-2 text-text-muted font-mono">
+                          5H Tokens: <span className="font-semibold text-text-main">{key.usage.tokens5h.used?.toLocaleString()}</span>/{key.usage.tokens5h.limit?.toLocaleString()}
+                        </span>
+                      )}
+                      {key.usage.tokensWeekly?.limit != null && (
+                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-surface-2 text-text-muted font-mono">
+                          Weekly Tokens: <span className="font-semibold text-text-main">{key.usage.tokensWeekly.used?.toLocaleString()}</span>/{key.usage.tokensWeekly.limit?.toLocaleString()}
+                        </span>
+                      )}
+                      {key.usage.tokensMonthly?.limit != null && (
+                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-surface-2 text-text-muted font-mono">
+                          Monthly Tokens: <span className="font-semibold text-text-main">{key.usage.tokensMonthly.used?.toLocaleString()}</span>/{key.usage.tokensMonthly.limit?.toLocaleString()}
+                        </span>
+                      )}
+                    </div>
+                  )}
                    {/* ACL badges */}
-                  {(key.allowedProviders || key.allowedCombos || key.allowedKinds) && (
+                  {(key.allowedProviders || key.allowedCombos || key.allowedKinds || key.allowedModels) && (
                     <div className="flex flex-wrap gap-1 mt-1">
                       {key.allowedProviders && (
                         <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-500 dark:bg-blue-500/20" title={key.allowedProviders.join(", ")}>
@@ -1547,6 +1639,11 @@ export default function APIPageClient() {
                       {key.allowedKinds && (
                         <span className="text-[10px] px-1.5 py-0.5 rounded bg-green-500/10 text-green-500 dark:bg-green-500/20">
                           {key.allowedKinds.length === 0 ? "No kinds" : key.allowedKinds.join(", ")}
+                        </span>
+                      )}
+                      {key.allowedModels && (
+                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-500 dark:bg-amber-500/20" title={key.allowedModels.join(", ")}>
+                          {key.allowedModels.length === 0 ? "No models" : `${key.allowedModels.length} models`}
                         </span>
                       )}
                     </div>
@@ -1769,6 +1866,79 @@ export default function APIPageClient() {
               </div>
             )}
             {editCombosAll && <p className="text-xs text-text-muted">This key can access all combos.</p>}
+          </div>
+
+          {/* Models Allowlist */}
+          <div>
+            <div className="flex items-center justify-between mb-2">
+              <label className="text-sm font-medium">Allowed Models / Patterns</label>
+              <label className="flex items-center gap-1.5 text-xs cursor-pointer">
+                <input type="checkbox" checked={editModelsAll} onChange={(e) => setEditModelsAll(e.target.checked)} />
+                <span className="text-text-muted">All allowed</span>
+              </label>
+            </div>
+            {!editModelsAll && (
+              <div className="space-y-1.5">
+                <textarea
+                  value={editModels}
+                  onChange={(e) => setEditModels(e.target.value)}
+                  placeholder="claude-3-5-sonnet-*\ngpt-4o\ncustom/*"
+                  rows={3}
+                  className="w-full text-xs font-mono p-2 rounded-lg border border-border bg-input focus:border-primary focus:outline-none"
+                />
+                <p className="text-[11px] text-text-muted">
+                  Enter model IDs or wildcard patterns (e.g. <code>claude-*</code>, <code>gemini-2.5*</code>), separated by commas or new lines.
+                </p>
+              </div>
+            )}
+            {editModelsAll && <p className="text-xs text-text-muted">This key can access all models.</p>}
+          </div>
+
+          {/* Usage & Rate Limits */}
+          <div className="border-t border-border-subtle pt-3">
+            <label className="text-sm font-medium mb-2 block">Rate & Token Limits (Optional)</label>
+            <div className="grid grid-cols-3 gap-2 mb-3">
+              <div>
+                <label className="text-[11px] text-text-muted block mb-0.5">RPM</label>
+                <Input value={editRpm} onChange={(e) => setEditRpm(e.target.value)} placeholder="e.g. 60" type="number" min="0" />
+              </div>
+              <div>
+                <label className="text-[11px] text-text-muted block mb-0.5">RPH</label>
+                <Input value={editRph} onChange={(e) => setEditRph(e.target.value)} placeholder="e.g. 1000" type="number" min="0" />
+              </div>
+              <div>
+                <label className="text-[11px] text-text-muted block mb-0.5">RPD</label>
+                <Input value={editRpd} onChange={(e) => setEditRpd(e.target.value)} placeholder="e.g. 5000" type="number" min="0" />
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-2 mb-3">
+              <div>
+                <label className="text-[11px] text-text-muted block mb-0.5">Max Tokens / Req</label>
+                <Input value={editMaxTokens} onChange={(e) => setEditMaxTokens(e.target.value)} placeholder="e.g. 8192" type="number" min="0" />
+              </div>
+              <div>
+                <label className="text-[11px] text-text-muted block mb-0.5">Daily Token Limit</label>
+                <Input value={editMaxTokensDaily} onChange={(e) => setEditMaxTokensDaily(e.target.value)} placeholder="e.g. 500000" type="number" min="0" />
+              </div>
+            </div>
+            <div className="grid grid-cols-3 gap-2 mb-3">
+              <div>
+                <label className="text-[11px] text-text-muted block mb-0.5">5H Rolling Tokens</label>
+                <Input value={editTokens5h} onChange={(e) => setEditTokens5h(e.target.value)} placeholder="e.g. 100000" type="number" min="0" />
+              </div>
+              <div>
+                <label className="text-[11px] text-text-muted block mb-0.5">Weekly Tokens</label>
+                <Input value={editTokensWeekly} onChange={(e) => setEditTokensWeekly(e.target.value)} placeholder="e.g. 2000000" type="number" min="0" />
+              </div>
+              <div>
+                <label className="text-[11px] text-text-muted block mb-0.5">Monthly Tokens</label>
+                <Input value={editTokensMonthly} onChange={(e) => setEditTokensMonthly(e.target.value)} placeholder="e.g. 10000000" type="number" min="0" />
+              </div>
+            </div>
+            <div>
+              <label className="text-[11px] text-text-muted block mb-0.5">Expires At (Local Time)</label>
+              <Input value={editExpiresAt} onChange={(e) => setEditExpiresAt(e.target.value)} type="datetime-local" />
+            </div>
           </div>
 
           {/* ACL info */}

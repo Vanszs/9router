@@ -13,6 +13,7 @@ export {
   listProxyPoolFitness, upsertProxyPoolFitness,
   deleteProxyPoolFitness, clearProxyPoolFitness, deleteProxyPoolFitnessByPool,
   getApiKeys, getApiKeyById, createApiKey, updateApiKey, deleteApiKey, validateApiKey,
+  checkApiKeyLimits, recordApiKeyUsage, getApiKeyUsageSnapshot,
   getCombos, getComboById, getComboByName,
   createCombo, updateCombo, deleteCombo,
   getModelAliases, setModelAlias, deleteModelAlias,

@@ -90,12 +90,18 @@ vi.mock("@/lib/localDb", () => ({
   getProviderConnections: vi.fn(() => []),
   validateApiKey: vi.fn(),
   getProviderNodeById: vi.fn(),
+  checkApiKeyLimits: vi.fn().mockResolvedValue({ allowed: true }),
+  recordApiKeyUsage: vi.fn().mockResolvedValue(undefined),
+  getApiKeyUsageSnapshot: vi.fn().mockResolvedValue(null),
 }));
 vi.mock("../../src/lib/localDb.js", () => ({
   getSettings: mocks.getSettings,
   getProviderConnections: vi.fn(() => []),
   validateApiKey: vi.fn(),
   getProviderNodeById: vi.fn(),
+  checkApiKeyLimits: vi.fn().mockResolvedValue({ allowed: true }),
+  recordApiKeyUsage: vi.fn().mockResolvedValue(undefined),
+  getApiKeyUsageSnapshot: vi.fn().mockResolvedValue(null),
 }));
 
 vi.mock("@/sse/services/model.js", () => ({ getModelInfo: mocks.getModelInfo, getComboModels: mocks.getComboModels }));
