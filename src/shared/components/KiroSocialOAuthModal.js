@@ -70,6 +70,7 @@ export default function KiroSocialOAuthModal({
           pollRef.current = setTimeout(poll, delayMs);
         };
 
+        let consecutiveErrors = 0;
         const poll = async () => {
           pollRef.current = null;
           if (cancelled) return;
@@ -99,9 +100,15 @@ export default function KiroSocialOAuthModal({
               return;
             }
 
+            consecutiveErrors = 0;
             currentIntervalMs = getNextKiroSocialPollInterval(currentIntervalMs, pollData.error);
             schedule(currentIntervalMs);
           } catch {
+            consecutiveErrors += 1;
+            if (consecutiveErrors >= 5) {
+              fail("Network error: Unable to reach authorization server. Please try again.");
+              return;
+            }
             schedule(currentIntervalMs);
           }
         };

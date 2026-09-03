@@ -120,8 +120,8 @@ function extractModel(url, body) {
     }
     const model = urlModel || parsed.model || null;
     const cleanModelName = String(model).replace(/^models\//, "");
-    if (cleanModelName === "gemini-3.6-flash-tiered" || cleanModelName === "gemini-3.7-flash-tiered") {
-      const ver = cleanModelName.includes("3.7") ? "3.7" : "3.6";
+    if (cleanModelName === "gemini-3.6-flash-tiered" || cleanModelName === "gemini-3.7-flash-tiered" || cleanModelName === "gemini-3.8-flash-tiered") {
+      const ver = cleanModelName.includes("3.8") ? "3.8" : cleanModelName.includes("3.7") ? "3.7" : "3.6";
       const rawLevel = parsed.request?.generationConfig?.thinkingConfig?.thinkingLevel
         || parsed.generationConfig?.thinkingConfig?.thinkingLevel;
       const level = ["high", "medium", "low"].includes(String(rawLevel).toLowerCase())

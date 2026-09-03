@@ -44,6 +44,25 @@ export async function addCustomModel({ providerAlias, id, type = "llm", name }) 
   return added;
 }
 
+export async function addCustomModelsBulk(models = []) {
+  if (!Array.isArray(models) || models.length === 0) return 0;
+  const db = await getAdapter();
+  let addedCount = 0;
+  db.transaction(() => {
+    for (const item of models) {
+      const { providerAlias, id, type = "llm", name } = item || {};
+      if (!providerAlias || !id) continue;
+      const k = customKey(providerAlias, id, type);
+      const row = db.get(`SELECT 1 FROM kv WHERE scope = 'customModels' AND key = ?`, [k]);
+      if (row) continue;
+      const value = stringifyJson({ providerAlias, id, type, name: name || id });
+      db.run(`INSERT INTO kv(scope, key, value) VALUES('customModels', ?, ?)`, [k, value]);
+      addedCount += 1;
+    }
+  });
+  return addedCount;
+}
+
 export async function deleteCustomModel({ providerAlias, id, type = "llm" }) {
   await customKv.remove(customKey(providerAlias, id, type));
 }

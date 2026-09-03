@@ -1,3 +1,24 @@
+# v0.91.21 (2026-09-03)
+
+## Features
+
+- **Gemini 3.8 Flash Tiered Support & Parity** — Registered `gemini-3.8-flash` in Gemini registry and tiered variants (`gemini-3.8-flash-high`, `gemini-3.8-flash-medium`, `gemini-3.8-flash-low`) in Antigravity provider registry, CLI menus, and MITM tooling with exact 1M context / 64k output capabilities, pricing ($0.75/$3.75), and quota tracking gauges.
+- **Media & Web Search Model Availability** — Resolved virtual and static model IDs for all webSearch (`ag/search`, `kimi/search`, `xai/search`, `gemini/search`, `glm/search`, `ollama-search/search`, `xquik/search`), webFetch (`/fetch`), and media providers across `/v1/models/web`, `/v1/models/info`, and ACL validation layers so media dashboard test cards execute without missing-model errors.
+- **Atomic Bulk Custom Model Imports** — Added `addCustomModelsBulk` using atomic SQLite transactions for multi-model imports with deduplication and normalized bulk responses in `/api/models/custom`.
+- **Antigravity Search Grounding Multi-Host Fallback** — Routed search grounding to `daily-cloudcode-pa` with automatic fallback to `cloudcode-pa` for resilience.
+
+## Reliability & Security
+
+- **Kiro Social OAuth Namespace & Poll Hardening** — Restricted `targetProvider` in social exchange to the `kiro` provider namespace to prevent connection hijacking, added exponential backoff / retry bounding on device polling network errors, and improved identity match safety.
+- **Model Resolution Optimization** — Deduplicated media model resolution across connected, free, and fallback provider paths in `allowedModels.js`.
+- **Responses Terminal Event Finalization** — Ensured usage statistics and request logs finalize cleanly when clients close on `response.completed` without trailing sentinels.
+
+## Tests & Verification
+
+- Full test suite verified: **265 test files passed, 13 skipped; 3069 tests passed, 82 skipped** (100% green).
+- Production build (`npm run build`) completed cleanly with TypeScript verification.
+- Code quality audits: `lint:undef` and `lint:reacthooks` clean.
+
 # v0.91.20 (2026-08-31)
 
 ## Features

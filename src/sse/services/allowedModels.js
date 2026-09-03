@@ -3,6 +3,7 @@ import {
   AI_PROVIDERS,
   FREE_PROVIDERS,
   getProviderAlias,
+  getProviderByAlias,
   isAnthropicCompatibleProvider,
   isOpenAICompatibleProvider,
 } from "@/shared/constants/providers";
@@ -120,6 +121,73 @@ function modelKind(model) {
   const k = model?.kind || model?.type;
   if (!k) return LLM_KIND;
   return MODEL_TYPE_TO_KIND[k] || LLM_KIND;
+}
+
+function appendConfiguredMediaModels(entries, providerInfo, alias, kindFilter, isDisabled = () => false) {
+  if (!providerInfo || !alias) return;
+
+  if (kindFilter.has("tts")) {
+    if (Array.isArray(providerInfo.ttsConfig?.models)) {
+      for (const m of providerInfo.ttsConfig.models) {
+        if (m?.id && !isDisabled(alias, m.id)) {
+          entries.push({ id: `${alias}/${m.id}`, object: "model", kind: "tts", owned_by: alias });
+        }
+      }
+    } else if (providerInfo.ttsConfig) {
+      entries.push({ id: `${alias}/tts`, object: "model", kind: "tts", owned_by: alias });
+    }
+  }
+
+  if (kindFilter.has("stt")) {
+    if (Array.isArray(providerInfo.sttConfig?.models)) {
+      for (const m of providerInfo.sttConfig.models) {
+        if (m?.id && !isDisabled(alias, m.id)) {
+          entries.push({ id: `${alias}/${m.id}`, object: "model", kind: "stt", owned_by: alias });
+        }
+      }
+    } else if (providerInfo.sttConfig) {
+      entries.push({ id: `${alias}/stt`, object: "model", kind: "stt", owned_by: alias });
+    }
+  }
+
+  if (kindFilter.has("image") && Array.isArray(providerInfo.imageConfig?.models)) {
+    for (const m of providerInfo.imageConfig.models) {
+      if (m?.id && !isDisabled(alias, m.id)) {
+        entries.push({ id: `${alias}/${m.id}`, object: "model", kind: "image", owned_by: alias });
+      }
+    }
+  }
+
+  if (kindFilter.has("embedding") && Array.isArray(providerInfo.embeddingConfig?.models)) {
+    for (const m of providerInfo.embeddingConfig.models) {
+      if (m?.id && !isDisabled(alias, m.id)) {
+        entries.push({ id: `${alias}/${m.id}`, object: "model", kind: "embedding", owned_by: alias });
+      }
+    }
+  }
+
+  if (kindFilter.has("webSearch") && (providerInfo.searchConfig || providerInfo.searchViaChat || providerInfo.serviceKinds?.includes("webSearch"))) {
+    entries.push({ id: `${alias}/search`, object: "model", kind: "webSearch", owned_by: alias });
+  }
+
+  if (kindFilter.has("webFetch") && (providerInfo.fetchConfig || providerInfo.serviceKinds?.includes("webFetch"))) {
+    entries.push({ id: `${alias}/fetch`, object: "model", kind: "webFetch", owned_by: alias });
+  }
+}
+
+export function isConfiguredMediaModel(alias, modelId) {
+  const provider = getProviderByAlias(alias);
+  if (!provider) return false;
+  if (modelId === "search" && (provider.searchConfig || provider.searchViaChat || provider.serviceKinds?.includes("webSearch"))) return true;
+  if (modelId === "fetch" && (provider.fetchConfig || provider.serviceKinds?.includes("webFetch"))) return true;
+  if (modelId === "stt" && (provider.sttConfig || provider.serviceKinds?.includes("stt"))) return true;
+  if (modelId === "tts" && (provider.ttsConfig || provider.serviceKinds?.includes("tts"))) return true;
+  if (modelId === "image" && (provider.imageConfig || provider.serviceKinds?.includes("image"))) return true;
+  if (provider.ttsConfig?.models?.some((m) => m.id === modelId)) return true;
+  if (provider.sttConfig?.models?.some((m) => m.id === modelId)) return true;
+  if (provider.imageConfig?.models?.some((m) => m.id === modelId)) return true;
+  if (provider.embeddingConfig?.models?.some((m) => m.id === modelId)) return true;
+  return false;
 }
 
 function inferKindFromUnknownModelId(modelId) {
@@ -342,6 +410,11 @@ async function buildAllModelEntries(kindFilter, combos, customModels, modelAlias
         entries.push({ id: `${alias}/${model.id}`, object: "model", owned_by: alias });
       }
     }
+    for (const [providerId, providerInfo] of Object.entries(AI_PROVIDERS)) {
+      if (!providerMatchesKinds(providerId, kindFilter)) continue;
+      const alias = getProviderAlias(providerId) || providerInfo.alias || providerId;
+      appendConfiguredMediaModels(entries, providerInfo, alias, kindFilter, isDisabled);
+    }
     for (const customModel of customModels) {
       if (!customModel?.id || (customModel.type && customModel.type !== "llm")) continue;
       if (!kindFilter.has(LLM_KIND)) continue;
@@ -368,7 +441,11 @@ async function buildAllModelEntries(kindFilter, combos, customModels, modelAlias
   }
 
   const noAuthProviders = Object.entries(AI_PROVIDERS).filter(([providerId, providerInfo]) =>
-    !activeConnectionByProvider.has(providerId) && providerInfo.noAuth && providerMatchesKinds(providerId, kindFilter)
+    !activeConnectionByProvider.has(providerId) && providerMatchesKinds(providerId, kindFilter) && (
+      providerInfo.noAuth ||
+      (kindFilter.has("webSearch") && (providerInfo.searchConfig || providerInfo.searchViaChat)) ||
+      (kindFilter.has("webFetch") && providerInfo.fetchConfig)
+    )
   );
   const noAuthResults = await Promise.allSettled(
     noAuthProviders.map(([providerId, providerInfo]) =>
@@ -517,26 +594,7 @@ async function buildConnectedProviderIds(providerId, conn, kindFilter, customMod
     entries.push(entry);
   }
 
-  if (kindFilter.has("tts") && Array.isArray(providerInfo?.ttsConfig?.models)) {
-    for (const m of providerInfo.ttsConfig.models) {
-      if (m?.id && !isDisabled(outputAlias, m.id) && !isDisabled(staticAlias, m.id)) {
-        entries.push({ id: `${outputAlias}/${m.id}`, object: "model", owned_by: outputAlias });
-      }
-    }
-  }
-  if (kindFilter.has("embedding") && Array.isArray(providerInfo?.embeddingConfig?.models)) {
-    for (const m of providerInfo.embeddingConfig.models) {
-      if (m?.id && !isDisabled(outputAlias, m.id) && !isDisabled(staticAlias, m.id)) {
-        entries.push({ id: `${outputAlias}/${m.id}`, object: "model", owned_by: outputAlias });
-      }
-    }
-  }
-  if (kindFilter.has("webSearch") && providerInfo?.searchConfig) {
-    entries.push({ id: `${outputAlias}/search`, object: "model", kind: "webSearch", owned_by: outputAlias });
-  }
-  if (kindFilter.has("webFetch") && providerInfo?.fetchConfig) {
-    entries.push({ id: `${outputAlias}/fetch`, object: "model", kind: "webFetch", owned_by: outputAlias });
-  }
+  appendConfiguredMediaModels(entries, providerInfo, outputAlias, kindFilter, (alias, id) => isDisabled(outputAlias, id) || isDisabled(staticAlias, id));
 
   return entries;
 }
@@ -581,26 +639,7 @@ async function buildFreeProviderIds(providerId, providerInfo, kindFilter, custom
     entries.push({ id: `${outputAlias}/${modelId}`, object: "model", owned_by: outputAlias });
   }
 
-  if (kindFilter.has("tts") && Array.isArray(providerInfo?.ttsConfig?.models)) {
-    for (const m of providerInfo.ttsConfig.models) {
-      if (m?.id && !isDisabled(outputAlias, m.id)) {
-        entries.push({ id: `${outputAlias}/${m.id}`, object: "model", owned_by: outputAlias });
-      }
-    }
-  }
-  if (kindFilter.has("embedding") && Array.isArray(providerInfo?.embeddingConfig?.models)) {
-    for (const m of providerInfo.embeddingConfig.models) {
-      if (m?.id && !isDisabled(outputAlias, m.id)) {
-        entries.push({ id: `${outputAlias}/${m.id}`, object: "model", owned_by: outputAlias });
-      }
-    }
-  }
-  if (kindFilter.has("webSearch") && providerInfo?.searchConfig) {
-    entries.push({ id: `${outputAlias}/search`, object: "model", kind: "webSearch", owned_by: outputAlias });
-  }
-  if (kindFilter.has("webFetch") && providerInfo?.fetchConfig) {
-    entries.push({ id: `${outputAlias}/fetch`, object: "model", kind: "webFetch", owned_by: outputAlias });
-  }
+  appendConfiguredMediaModels(entries, providerInfo, outputAlias, kindFilter, isDisabled);
 
   return entries;
 }
@@ -697,6 +736,16 @@ export function invalidateAllowedModelsCache() {
 export async function isModelAllowed(modelStr, apiKeyInfo = null) {
   if (!apiKeyInfo) return true;
   const allowed = await getAllowedModelIds();
-  return allowed.has(modelStr);
+  if (allowed.has(modelStr)) return true;
+
+  // Virtual and config-defined endpoints for media kinds (webSearch, webFetch, stt, tts, image, embedding)
+  if (typeof modelStr === "string" && modelStr.includes("/")) {
+    const slash = modelStr.indexOf("/");
+    const alias = modelStr.slice(0, slash);
+    const modelId = modelStr.slice(slash + 1);
+    return isConfiguredMediaModel(alias, modelId);
+  }
+
+  return false;
 }
 

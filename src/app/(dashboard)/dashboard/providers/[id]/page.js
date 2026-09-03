@@ -677,7 +677,7 @@ export default function ProviderDetailPage() {
         }
       }
 
-      let importedCount = 0;
+      const toImport = [];
       for (const model of validModels) {
         const rawId = model.id || model.name || model.model;
         const kind = getModelKind(model);
@@ -687,14 +687,24 @@ export default function ProviderDetailPage() {
         const modelId = rawId.replace(prefixPattern, "");
         if (!modelId || existingIds.has(modelId)) continue;
 
-        await handleAddCustomModel(modelId, "llm", providerStorageAlias);
+        toImport.push({ providerAlias: providerStorageAlias, id: modelId, type: "llm" });
         existingIds.add(modelId);
-        importedCount += 1;
       }
 
-      if (importedCount === 0) {
+      if (toImport.length === 0) {
         setNoticeState({ title: translate("Notice"), message: translate("All models already exist, no new models added"), variant: "info" });
       } else {
+        const res = await fetch("/api/models/custom", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ models: toImport }),
+        });
+        const data = await res.json();
+        const importedCount = data.count ?? toImport.length;
+
+        await fetchCustomModels();
+        if (typeof window !== "undefined") window.dispatchEvent(new CustomEvent("customModelChanged"));
+
         setNoticeState({
           title: translate("Success"),
           message: translate("Successfully added") + ` ${importedCount} ` + translate("models"),

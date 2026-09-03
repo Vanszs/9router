@@ -1,6 +1,6 @@
 {
   "name": "vansrouter",
-  "version": "0.91.20",
+  "version": "0.91.21",
   "description": "Vansrouter CLI - Start and manage Vansrouter server",
   "engines": {
     "node": ">=22.5.0"

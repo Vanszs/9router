@@ -53,6 +53,9 @@ const PROVIDER_MODELS = {
     { id: "glm-4.7" },
   ],
   ag: [
+    { id: "gemini-3.8-flash-high" },
+    { id: "gemini-3.8-flash-medium" },
+    { id: "gemini-3.8-flash-low" },
     { id: "gemini-3.7-flash-high" },
     { id: "gemini-3.7-flash-medium" },
     { id: "gemini-3.7-flash-low" },
@@ -101,6 +104,8 @@ const PROVIDER_MODELS = {
     { id: "claude-3-5-sonnet-20241022" },
   ],
   gemini: [
+    { id: "gemini-3.8-flash" },
+    { id: "gemini-3.7-flash" },
     { id: "gemini-3-pro-preview" },
     { id: "gemini-2.5-pro" },
     { id: "gemini-2.5-flash" },
@@ -175,7 +180,7 @@ function countConnectionsByProvider(connections) {
 async function showProvidersMenu(breadcrumb = []) {
   // Build provider items list
   const providerItems = [];
-  
+
   Object.values(OAUTH_PROVIDERS).forEach(provider => {
     providerItems.push({
       provider,
@@ -190,7 +195,7 @@ async function showProvidersMenu(breadcrumb = []) {
       }
     });
   });
-  
+
   Object.values(APIKEY_PROVIDERS).forEach(provider => {
     providerItems.push({
       provider,
@@ -253,10 +258,10 @@ async function showProvidersMenu(breadcrumb = []) {
 function buildProviderHeader(providerId) {
   const provider = ALL_PROVIDERS[providerId];
   const alias = provider.alias || providerId;
-  
+
   const lines = [];
   lines.push(`Alias: ${COLORS.cyan}${alias}${COLORS.reset}`);
-  
+
   // Get models from static config
   const models = PROVIDER_MODELS[alias] || [];
   if (models.length > 0) {
@@ -269,7 +274,7 @@ function buildProviderHeader(providerId) {
   } else {
     lines.push(`Models: ${COLORS.dim}No models configured${COLORS.reset}`);
   }
-  
+
   return lines.join("\n");
 }
 
@@ -283,7 +288,7 @@ function buildProviderHeader(providerId) {
 async function showProviderDetail(providerId, authType, allConnections, breadcrumb = []) {
   const provider = ALL_PROVIDERS[providerId];
   const { showListMenu } = require("../utils/menuHelper");
-  
+
   await showListMenu({
     title: `🔌 ${provider.name} (${authType.toUpperCase()})`,
     breadcrumb,
@@ -295,7 +300,7 @@ async function showProviderDetail(providerId, authType, allConnections, breadcru
         allConnections.length = 0;
         allConnections.push(...(response.data.connections || []));
       }
-      const providerConns = allConnections.filter(conn => 
+      const providerConns = allConnections.filter(conn =>
         (conn.provider || conn.providerId) === providerId
       );
       return { items: providerConns };
@@ -325,9 +330,9 @@ async function showProviderDetail(providerId, authType, allConnections, breadcru
  */
 async function showConnectionActions(connection, providerId, breadcrumb = []) {
   const name = connection.name || connection.email || connection.displayName || "Unnamed";
-  const status = connection.testStatus === "active" ? "✓ Active" : 
+  const status = connection.testStatus === "active" ? "✓ Active" :
                  connection.testStatus === "error" ? "✗ Error" : "? Unknown";
-  
+
   await showMenuWithBack({
     title: `🔌 ${name}`,
     breadcrumb: [...breadcrumb, name],
@@ -422,35 +427,35 @@ async function handleAddApiKeyConnection(providerId) {
   clearScreen();
   const provider = ALL_PROVIDERS[providerId];
   console.log(`\n➕ Add ${provider.name} API Key Connection\n`);
-  
+
   const name = await prompt("Connection Name: ");
   if (!name) {
     showStatus("Cancelled", "warning");
     await pause();
     return;
   }
-  
+
   const apiKey = await prompt("API Key: ");
   if (!apiKey) {
     showStatus("Cancelled", "warning");
     await pause();
     return;
   }
-  
+
   showStatus("Creating connection...", "info");
-  
+
   const result = await api.createApiKeyProvider({
     provider: providerId,
     name,
     apiKey
   });
-  
+
   if (result.success) {
     showStatus("✓ Connection created successfully!", "success");
   } else {
     showStatus(`✗ Failed: ${result.error}`, "error");
   }
-  
+
   await pause();
 }
 
@@ -462,33 +467,33 @@ async function handleAddApiKeyConnection(providerId) {
 async function handleAddOAuthConnection(providerId) {
   clearScreen();
   const provider = ALL_PROVIDERS[providerId];
-  
+
   // Step 1: Get auth URL
   showStatus("Requesting authorization URL...", "info");
   const authResult = await api.getOAuthAuthUrl(providerId);
-  
+
   if (!authResult.success) {
     showStatus(`Failed: ${authResult.error}`, "error");
     await pause();
     return;
   }
-  
+
   const authData = authResult.data || authResult;
   const authUrl = authData.authUrl;
   const codeVerifier = authData.codeVerifier;
   const state = authData.state;
   const redirectUri = authData.redirectUri;
-  
+
   if (!authUrl) {
     showStatus("Failed: No auth URL received", "error");
     await pause();
     return;
   }
-  
+
   // Step 2: Show URL and instructions
   clearScreen();
   showHeader("🔐 OAuth Login", `Providers > ${provider.name} > Add Connection`);
-  
+
   console.log(`  ${COLORS.bold}${COLORS.cyan}1.${COLORS.reset} Open this URL in your browser:`);
   console.log(`     ${COLORS.dim}${authUrl}${COLORS.reset}`);
   if (copyToClipboard(authUrl)) {
@@ -500,14 +505,14 @@ async function handleAddOAuthConnection(providerId) {
   console.log(`  ${COLORS.bold}${COLORS.cyan}3.${COLORS.reset} Copy the callback URL from address bar`);
   console.log(`     ${COLORS.dim}(looks like: http://localhost:20128/callback?code=...)${COLORS.reset}`);
   console.log();
-  
+
   const callbackUrl = await prompt("  Paste callback URL: ");
   if (!callbackUrl) {
     showStatus("Cancelled", "warning");
     await pause();
     return;
   }
-  
+
   // Step 3: Parse callback URL and extract code
   let code, urlState, error;
   try {
@@ -515,14 +520,14 @@ async function handleAddOAuthConnection(providerId) {
     code = url.searchParams.get("code");
     urlState = url.searchParams.get("state");
     error = url.searchParams.get("error");
-    
+
     if (error) {
       const errorDesc = url.searchParams.get("error_description") || error;
       showStatus(`Authorization failed: ${errorDesc}`, "error");
       await pause();
       return;
     }
-    
+
     if (!code) {
       showStatus("No authorization code found in URL", "error");
       await pause();
@@ -533,7 +538,7 @@ async function handleAddOAuthConnection(providerId) {
     await pause();
     return;
   }
-  
+
   // Step 4: Exchange code for tokens
   console.log();
   showStatus("Exchanging code for tokens...", "info");
@@ -543,13 +548,13 @@ async function handleAddOAuthConnection(providerId) {
     codeVerifier,
     state: urlState || state
   });
-  
+
   if (exchangeResult.success) {
     showStatus("Connection created successfully!", "success");
   } else {
     showStatus(`Failed: ${exchangeResult.error}`, "error");
   }
-  
+
   await pause();
 }
 
@@ -560,17 +565,17 @@ async function handleAddOAuthConnection(providerId) {
 async function handleAddDeviceCodeConnection(providerId) {
   clearScreen();
   const provider = ALL_PROVIDERS[providerId];
-  
+
   // Step 1: Request device code
   showStatus("Requesting device code...", "info");
   const deviceResult = await api.getOAuthDeviceCode(providerId);
-  
+
   if (!deviceResult.success) {
     showStatus(`Failed: ${deviceResult.error}`, "error");
     await pause();
     return;
   }
-  
+
   const deviceData = deviceResult.data || deviceResult;
   const device_code = deviceData.device_code;
   const user_code = deviceData.user_code;
@@ -578,18 +583,18 @@ async function handleAddDeviceCodeConnection(providerId) {
   const verification_uri_complete = deviceData.verification_uri_complete;
   const codeVerifier = deviceData.codeVerifier;
   const extraData = deviceData.extraData || deviceData;
-  
+
   if (!device_code) {
     showStatus("Failed: No device code received", "error");
     await pause();
     return;
   }
-  
+
   // Step 2: Show instructions
   clearScreen();
   const deviceUrl = verification_uri_complete || verification_uri;
   showHeader("📱 Device Login", `Providers > ${provider.name} > Add Connection`);
-  
+
   console.log(`  ${COLORS.bold}${COLORS.cyan}1.${COLORS.reset} Open: ${COLORS.dim}${deviceUrl}${COLORS.reset}`);
   if (copyToClipboard(deviceUrl)) {
     console.log(`     \x1b[32m✓ Link copied to clipboard!\x1b[0m`);
@@ -601,24 +606,24 @@ async function handleAddDeviceCodeConnection(providerId) {
   }
   console.log(`  ${COLORS.dim}Waiting for authorization...${COLORS.reset}`);
   console.log();
-  
+
   // Step 3: Poll for token
   const maxAttempts = 60; // 5 minutes (5s interval)
   for (let i = 0; i < maxAttempts; i++) {
     await new Promise(resolve => setTimeout(resolve, 5000));
-    
+
     const pollResult = await api.pollOAuthToken(providerId, {
       deviceCode: device_code,
       codeVerifier,
       extraData
     });
-    
+
     if (pollResult.success) {
       showStatus("\nConnection created successfully!", "success");
       await pause();
       return;
     }
-    
+
     // Check if still pending (pending flag is at root level, not in data)
     const isPending = pollResult.pending || pollResult.error === "authorization_pending" || pollResult.error === "slow_down";
     if (!isPending) {
@@ -626,10 +631,10 @@ async function handleAddDeviceCodeConnection(providerId) {
       await pause();
       return;
     }
-    
+
     process.stdout.write(".");
   }
-  
+
   showStatus("\nTimeout waiting for authorization", "error");
   await pause();
 }

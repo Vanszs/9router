@@ -77,7 +77,8 @@ export async function POST(request) {
       providerSpecificData.profileArn = data.profileArn;
     }
 
-    const resolvedProvider = targetProvider || "kiro";
+    // Ensure targetProvider is constrained strictly to kiro or kiro-compatible providers
+    const resolvedProvider = (targetProvider === "kiro" || targetProvider?.startsWith("kiro-")) ? targetProvider : "kiro";
     const record = {
       accessToken: data.accessToken,
       refreshToken: data.refreshToken,

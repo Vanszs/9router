@@ -81,4 +81,24 @@ describe("provider custom model rows", () => {
       },
     ]);
   });
+
+  it("adds custom models in bulk atomically", async () => {
+    const { addCustomModelsBulk, getCustomModels, deleteCustomModel } = await import("@/lib/db/index.js");
+    const testModels = [
+      { providerAlias: "test-bulk-prov", id: "bulk-m1", type: "llm" },
+      { providerAlias: "test-bulk-prov", id: "bulk-m2", type: "llm" },
+    ];
+    const count = await addCustomModelsBulk(testModels);
+    expect(count).toBe(2);
+
+    const all = await getCustomModels();
+    const found1 = all.find((m) => m.providerAlias === "test-bulk-prov" && m.id === "bulk-m1");
+    const found2 = all.find((m) => m.providerAlias === "test-bulk-prov" && m.id === "bulk-m2");
+    expect(found1).toBeDefined();
+    expect(found2).toBeDefined();
+
+    // Clean up
+    await deleteCustomModel({ providerAlias: "test-bulk-prov", id: "bulk-m1", type: "llm" });
+    await deleteCustomModel({ providerAlias: "test-bulk-prov", id: "bulk-m2", type: "llm" });
+  });
 });

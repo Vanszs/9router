@@ -63,12 +63,12 @@ function lookup(fullId, requestedKind) {
   }
 
   // Web search/fetch — virtual model id "search" / "fetch"
-  if (modelId === "search" && providerInfo?.searchConfig) {
+  if (modelId === "search" && (providerInfo?.searchConfig || providerInfo?.searchViaChat)) {
     return buildInfo({
       alias, providerId, kind: "webSearch", providerInfo,
        model: {
          id: "search",
-         name: `${providerInfo.name} Search`,
+         name: `${providerInfo.name || providerId} Search`,
          params: providerId === "exa"
            ? ["query", "max_results", "search_type", "exa_options", "exa_options.contents"]
            : ["query", "max_results", "country", "language", "time_range", "domain_filter", "search_type"],

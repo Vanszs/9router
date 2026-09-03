@@ -469,47 +469,52 @@ export async function handleChatSearch({
       ? Math.floor(maxResults)
       : DEFAULT_MAX_RESULTS;
   const useModel = model || searchModel(provider);
-  const url = cfg.endpoint(useModel);
+  const primaryUrl = cfg.endpoint(useModel);
+  const candidateUrls = provider === "antigravity"
+    ? (primaryUrl.includes("daily-cloudcode-pa")
+        ? [primaryUrl, primaryUrl.replace("daily-cloudcode-pa", "cloudcode-pa")]
+        : [primaryUrl.replace("cloudcode-pa", "daily-cloudcode-pa"), primaryUrl])
+    : [primaryUrl];
   const body = cfg.buildBody(query, useModel, credentials);
   const headers = cfg.buildHeaders(token);
 
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
-
-  let upstreamStart = Date.now();
   let resp;
-  try {
-    resp = await fetch(url, {
-      method: "POST",
-      headers,
-      body: JSON.stringify(body),
-      signal: controller.signal
-    });
-  } catch (err) {
-    clearTimeout(timer);
-    if (err?.name === "AbortError") {
-      log?.warn?.(`[chatSearch] timeout provider=${provider}`);
-      return { success: false, status: 504, error: "Upstream timeout" };
-    }
-    log?.error?.(`[chatSearch] network error provider=${provider}: ${err?.message}`);
-    return {
-      success: false,
-      status: 502,
-      error: `Network error: ${err?.message || "unknown"}`
-    };
-  }
-  clearTimeout(timer);
-  const upstreamLatency = Date.now() - upstreamStart;
-
+  let upstreamLatency = 0;
   let data;
-  try {
-    data = await resp.json();
-  } catch {
-    return {
-      success: false,
-      status: 502,
-      error: `Invalid upstream response (status ${resp.status})`
-    };
+
+  for (const url of candidateUrls) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+    const upstreamStart = Date.now();
+
+    try {
+      resp = await fetch(url, {
+        method: "POST",
+        headers,
+        body: JSON.stringify(body),
+        signal: controller.signal
+      });
+      clearTimeout(timer);
+      upstreamLatency = Date.now() - upstreamStart;
+      data = await resp.json().catch(() => null);
+      if (resp.ok && data) break;
+      if (resp.status !== 429 && resp.status !== 503 && resp.status !== 502) break;
+    } catch (err) {
+      clearTimeout(timer);
+      if (err?.name === "AbortError") {
+        log?.warn?.(`[chatSearch] timeout provider=${provider} url=${url}`);
+      } else {
+        log?.error?.(`[chatSearch] network error provider=${provider}: ${err?.message}`);
+      }
+    }
+  }
+
+  if (!resp) {
+    return { success: false, status: 502, error: "Network error: all search endpoints failed" };
+  }
+
+  if (!data) {
+    return { success: false, status: resp.status || 502, error: `Invalid upstream response (status ${resp.status})` };
   }
 
   if (!resp.ok) {
