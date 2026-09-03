@@ -40,6 +40,9 @@ export {
 export {
   getApiKeys, getApiKeyById, createApiKey, updateApiKey, deleteApiKey, validateApiKey,
 } from "./repos/apiKeysRepo.js";
+export {
+  checkApiKeyLimits, recordApiKeyUsage, getApiKeyUsageSnapshot,
+} from "./repos/apiKeyUsageRepo.js";
 
 // Combos
 export {

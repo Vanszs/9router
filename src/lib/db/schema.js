@@ -3,7 +3,7 @@
 // pre-change safety backup in migrate.js: when the stored version is lower,
 // one lightweight DB backup is taken before applying schema changes. Forgetting
 // to bump only skips that backup — it does NOT break the additive auto-sync.
-export const SCHEMA_VERSION = 8;
+export const SCHEMA_VERSION = 9;
 
 export const PRAGMA_SQL = `
 PRAGMA journal_mode = WAL;
@@ -99,8 +99,47 @@ export const TABLES = {
       machineId: "TEXT",
       isActive: "INTEGER DEFAULT 1",
       createdAt: "TEXT NOT NULL",
+      allowedProviders: "TEXT",
+      allowedCombos: "TEXT",
+      allowedKinds: "TEXT",
+      allowedModels: "TEXT",
+      expiresAt: "TEXT",
+      maxTokens: "INTEGER",
+      maxTokensDaily: "INTEGER",
+      rpm: "INTEGER",
+      rph: "INTEGER",
+      rpd: "INTEGER",
+      tokens5h: "INTEGER",
+      tokensWeekly: "INTEGER",
+      tokensMonthly: "INTEGER",
     },
     indexes: ["CREATE INDEX IF NOT EXISTS idx_ak_key ON apiKeys(key)"],
+  },
+  apiKeyUsageBuckets: {
+    columns: {
+      keyId: "TEXT NOT NULL",
+      bucketType: "TEXT NOT NULL",
+      bucketKey: "TEXT NOT NULL",
+      count: "INTEGER NOT NULL DEFAULT 0",
+      tokens: "INTEGER NOT NULL DEFAULT 0",
+      updatedAt: "INTEGER NOT NULL",
+    },
+    primaryKey: "PRIMARY KEY (keyId, bucketType, bucketKey)",
+    indexes: [
+      "CREATE INDEX IF NOT EXISTS idx_akub_key_type ON apiKeyUsageBuckets(keyId, bucketType)",
+      "CREATE INDEX IF NOT EXISTS idx_akub_updated ON apiKeyUsageBuckets(updatedAt)",
+    ],
+  },
+  apiKeyTokenEvents: {
+    columns: {
+      id: "INTEGER PRIMARY KEY AUTOINCREMENT",
+      keyId: "TEXT NOT NULL",
+      timestamp: "INTEGER NOT NULL",
+      tokens: "INTEGER NOT NULL",
+    },
+    indexes: [
+      "CREATE INDEX IF NOT EXISTS idx_akte_key_ts ON apiKeyTokenEvents(keyId, timestamp)",
+    ],
   },
   combos: {
     columns: {

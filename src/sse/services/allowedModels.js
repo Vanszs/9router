@@ -695,8 +695,26 @@ export function invalidateAllowedModelsCache() {
 }
 
 export async function isModelAllowed(modelStr, apiKeyInfo = null) {
-  if (!apiKeyInfo) return true;
   const allowed = await getAllowedModelIds();
-  return allowed.has(modelStr);
+  if (!allowed.has(modelStr)) return false;
+  if (!apiKeyInfo) return true;
+
+  // Check per-key allowedModels if configured
+  const keyAllowedModels = apiKeyInfo.allowedModels;
+  if (keyAllowedModels === null || keyAllowedModels === undefined) return true;
+  if (!Array.isArray(keyAllowedModels) || keyAllowedModels.length === 0) return false;
+
+  const target = String(modelStr).trim().toLowerCase();
+  for (const item of keyAllowedModels) {
+    if (!item) continue;
+    const pat = String(item).trim().toLowerCase();
+    if (pat === target) return true;
+    if (pat.includes("*")) {
+      const escaped = pat.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*");
+      const regex = new RegExp(`^${escaped}$`);
+      if (regex.test(target)) return true;
+    }
+  }
+  return false;
 }
 

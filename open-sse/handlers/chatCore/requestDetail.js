@@ -1,6 +1,7 @@
 import { saveRequestUsage, appendRequestLog, saveRequestDetail } from "@/lib/usageDb.js";
 import { COLORS } from "../../utils/stream.js";
 import { canonicalizeUsage } from "../../utils/usageTracking.js";
+import { recordApiKeyUsage } from "@/lib/localDb.js";
 
 const OPTIONAL_PARAMS = [
   "temperature", "top_p", "top_k",
@@ -97,7 +98,15 @@ export function buildRequestDetail(base, overrides = {}) {
   };
 }
 
-export function saveUsageStats({ provider, model, tokens, connectionId, apiKey, endpoint, label = "USAGE" }) {
+export function saveUsageStats({ provider, model, tokens, connectionId, apiKey, apiKeyInfo, endpoint, label = "USAGE" }) {
+  if (apiKeyInfo) {
+    const inTok = tokens ? (tokens.input_tokens ?? tokens.prompt_tokens ?? 0) : 0;
+    const outTok = tokens ? (tokens.output_tokens ?? tokens.completion_tokens ?? 0) : 0;
+    const totalTokens = Math.max(0, inTok + outTok);
+    // Record usage to persistent SQLite repo (request already counted at admission = true)
+    recordApiKeyUsage(apiKeyInfo, totalTokens, { requestAlreadyCounted: true }).catch(() => {});
+  }
+
   if (!tokens || typeof tokens !== "object") return;
 
   const inTokens = tokens.input_tokens ?? tokens.prompt_tokens ?? 0;

@@ -11,7 +11,6 @@ import {
   isKindAllowed,
   isTrustedInternalRequest,
 } from "../services/auth.js";
-import { handleAntigravityQuotaError } from "../services/antigravityQuota.js";
 import {
   isKimchiQuotaExhausted,
   buildKimchiQuotaExhaustedUpdate,
@@ -23,6 +22,8 @@ import {
   recordProviderFailure,
   clearProviderFailure,
 } from "open-sse/services/accountFallback.js";
+import { checkApiKeyLimits } from "@/lib/localDb.js";
+import { handleAntigravityQuotaError } from "../services/antigravityQuota.js";
 import {
   acquire as acquireAccountSemaphore,
   resolveAccountSemaphoreKey,
@@ -121,6 +122,27 @@ export async function handleChat(request, clientRawRequest = null) {
     if (!apiKeyInfo) {
       log.warn("AUTH", "Invalid API key (requireApiKey=true)");
       return errorResponse(HTTP_STATUS.UNAUTHORIZED, "Invalid API key");
+    }
+  }
+
+  // Enforce per-key usage limits (applies even when requireApiKey is false but a key was supplied)
+  if (apiKeyInfo) {
+    const estimatedTokens = Math.max(0, Number(body.max_tokens || body.max_completion_tokens) || (msgCount * 50));
+    const limitCheck = await checkApiKeyLimits(apiKeyInfo, estimatedTokens, true);
+    if (!limitCheck.allowed) {
+      log.warn("AUTH", `API key limit exceeded: ${limitCheck.reason}`);
+      const retryAfter = limitCheck.retryAfterMs ? Math.ceil(limitCheck.retryAfterMs / 1000).toString() : undefined;
+      const resBody = JSON.stringify({
+        error: { message: limitCheck.reason, type: "rate_limit_error", code: "rate_limit_exceeded" },
+      });
+      return new Response(resBody, {
+        status: HTTP_STATUS.RATE_LIMITED,
+        headers: {
+          "Content-Type": "application/json",
+          "Access-Control-Allow-Origin": "*",
+          ...(retryAfter ? { "Retry-After": retryAfter } : {}),
+        },
+      });
     }
   }
 

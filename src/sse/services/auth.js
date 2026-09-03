@@ -490,3 +490,28 @@ export function isKindAllowed(apiKeyInfo, kind) {
   return allowed.includes(kind);
 }
 
+/**
+ * Check if a model name is allowed for a given API key.
+ * null = all allowed (default). [] = none allowed. [x] = only x.
+ * Supports exact match, model alias match, or wildcard glob match (e.g. "claude-*", "gpt-4*").
+ */
+export function isModelAllowed(apiKeyInfo, modelName) {
+  if (!apiKeyInfo) return true;
+  const allowed = apiKeyInfo.allowedModels;
+  if (allowed === null || allowed === undefined) return true; // null = all
+  if (!Array.isArray(allowed) || allowed.length === 0) return false; // [] = none
+  if (!modelName) return false;
+
+  const target = String(modelName).trim().toLowerCase();
+  for (const item of allowed) {
+    if (!item) continue;
+    const pat = String(item).trim().toLowerCase();
+    if (pat === target) return true;
+    if (pat.includes("*")) {
+      const escaped = pat.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*");
+      const regex = new RegExp(`^${escaped}$`);
+      if (regex.test(target)) return true;
+    }
+  }
+  return false;
+}
