@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 import { createProviderConnectionsBulk } from "@/models";
 import {
-  AI_PROVIDERS,
   FREE_TIER_PROVIDERS,
   WEB_COOKIE_PROVIDERS,
   isOpenAICompatibleProvider,
@@ -31,7 +30,7 @@ export async function POST(request) {
       || isOpenAICompatibleProvider(provider)
       || isAnthropicCompatibleProvider(provider)
       || isCustomEmbeddingProvider(provider);
-    if (items.some((item) => !validProvider(item.provider) || !AI_PROVIDERS[item.provider] || !item.apiKey || !item.name)) {
+    if (items.some((item) => !validProvider(item.provider) || !item.apiKey || !item.name)) {
       return NextResponse.json({ error: "Every item requires a valid API-key provider, name, and apiKey" }, { status: 400 });
     }
     const names = new Set();
