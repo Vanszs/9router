@@ -159,6 +159,68 @@ describe("OpenCode Go per-model transport guard (chatCore logic)", () => {
   });
 });
 
+describe("OpenCode Go session affinity headers", () => {
+  it("sends x-opencode-session on every request (chat, messages, responses)", () => {
+    const executor = new OpenCodeGoExecutor();
+    const creds = { apiKey: "test", connectionId: "conn-1" };
+    for (const [model, expectedUrl] of [
+      ["glm-5.2", "https://opencode.ai/zen/go/v1/chat/completions"],
+      ["minimax-m3", "https://opencode.ai/zen/go/v1/messages"],
+      ["deepseek-v4-flash", "https://opencode.ai/zen/go/v1/chat/completions"],
+    ]) {
+      executor.buildUrl(model);
+      const headers = executor.buildHeaders(creds, true);
+      expect(headers["x-opencode-session"]).toBeTruthy();
+      expect(executor.buildUrl(model)).toBe(expectedUrl);
+    }
+  });
+
+  it("keeps the session stable across turns of one conversation", () => {
+    const executor = new OpenCodeGoExecutor();
+    const creds = { apiKey: "test", connectionId: "conn-1" };
+    const body = { model: "glm-5.2", messages: [{ role: "user", content: "hi" }] };
+    executor.buildUrl("glm-5.2");
+    executor.transformRequest("glm-5.2", body, true, creds);
+    const first = executor.buildHeaders(creds, true)["x-opencode-session"];
+    const second = executor.buildHeaders(creds, true)["x-opencode-session"];
+    expect(first).toBeTruthy();
+    expect(second).toBe(first);
+  });
+
+  it("client-provided x-opencode-session header wins", () => {
+    const executor = new OpenCodeGoExecutor();
+    const creds = {
+      apiKey: "test",
+      rawHeaders: { "x-opencode-session": "client-provided-session" },
+    };
+    executor.buildUrl("glm-5.2");
+    const headers = executor.buildHeaders(creds, true);
+    expect(headers["x-opencode-session"]).toBe("client-provided-session");
+  });
+
+  it("sets the full x-opencode-* header family", () => {
+    const executor = new OpenCodeGoExecutor();
+    const creds = { apiKey: "test" };
+    executor.buildUrl("glm-5.2");
+    const headers = executor.buildHeaders(creds, true);
+    expect(headers["x-opencode-client"]).toBe("desktop");
+    expect(headers["x-opencode-session"]).toMatch(/^ses_/);
+    expect(headers["x-opencode-request"]).toMatch(/^msg_/);
+    expect(headers["x-opencode-project"]).toBe("global");
+    expect(headers["Authorization"]).toBe("Bearer test");
+  });
+
+  it("keeps x-api-key auth on messages-format models while adding session headers", () => {
+    const executor = new OpenCodeGoExecutor();
+    const creds = { apiKey: "test" };
+    executor.buildUrl("minimax-m3");
+    const headers = executor.buildHeaders(creds, true);
+    expect(headers["x-api-key"]).toBe("test");
+    expect(headers["anthropic-version"]).toBeDefined();
+    expect(headers["x-opencode-session"]).toMatch(/^ses_/);
+  });
+});
+
 describe("OpenCode Go Muse Spark (responses-only model)", () => {
   it("declares openai-responses as the only supported format and target", () => {
     for (const m of RESPONSES_ONLY) {
