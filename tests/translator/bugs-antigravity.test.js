@@ -263,4 +263,59 @@ describe("Antigravity executor", () => {
     expect(out.request.contents).toEqual([{ role: "user", parts: [{ text: "prompt" }] }]);
     expect(out.request.contents.every(c => c.parts.length > 0)).toBe(true);
   });
+
+  it("converts Claude image and document blocks to inlineData for Claude Antigravity models", () => {
+    const claudeReq = {
+      model: "claude-opus-4-6-thinking",
+      messages: [
+        {
+          role: "user",
+          content: [
+            { type: "text", text: "explain this image" },
+            {
+              type: "image",
+              source: {
+                type: "base64",
+                media_type: "image/png",
+                data: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
+              },
+            },
+            {
+              type: "document",
+              source: {
+                type: "base64",
+                media_type: "application/pdf",
+                data: "JVBERi0xLjEKMSAwIG9iajw8L1R5cGUvQ2F0YWxvZy9QYWdlcyAyIDAgUj4+ZW5kb2Jq",
+              },
+            },
+          ],
+        },
+      ],
+    };
+
+    const out = translateRequest(
+      FORMATS.CLAUDE,
+      FORMATS.ANTIGRAVITY,
+      "claude-opus-4-6-thinking",
+      claudeReq,
+      true,
+      { projectId: "p", connectionId: "c" }
+    );
+
+    const parts = out.request.contents[0].parts;
+    expect(parts).toHaveLength(3);
+    expect(parts[0]).toEqual({ text: "explain this image" });
+    expect(parts[1]).toEqual({
+      inlineData: {
+        mimeType: "image/png",
+        data: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
+      },
+    });
+    expect(parts[2]).toEqual({
+      inlineData: {
+        mimeType: "application/pdf",
+        data: "JVBERi0xLjEKMSAwIG9iajw8L1R5cGUvQ2F0YWxvZy9QYWdlcyAyIDAgUj4+ZW5kb2Jq",
+      },
+    });
+  });
 });
