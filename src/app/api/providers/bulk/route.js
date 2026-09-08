@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
-import { createProviderConnectionsBulk } from "@/models";
+import { createProviderConnectionsBulk, getProviderNodeById } from "@/models";
 import {
-  AI_PROVIDERS,
   FREE_TIER_PROVIDERS,
   WEB_COOKIE_PROVIDERS,
   isOpenAICompatibleProvider,
@@ -31,7 +30,7 @@ export async function POST(request) {
       || isOpenAICompatibleProvider(provider)
       || isAnthropicCompatibleProvider(provider)
       || isCustomEmbeddingProvider(provider);
-    if (items.some((item) => !validProvider(item.provider) || !AI_PROVIDERS[item.provider] || !item.apiKey || !item.name)) {
+    if (items.some((item) => !validProvider(item.provider) || !item.apiKey || !item.name)) {
       return NextResponse.json({ error: "Every item requires a valid API-key provider, name, and apiKey" }, { status: 400 });
     }
     const names = new Set();
@@ -42,6 +41,31 @@ export async function POST(request) {
       }
       names.add(key);
     }
+
+    const nodes = new Map();
+    for (const item of items) {
+      const isOpenAI = isOpenAICompatibleProvider(item.provider);
+      const isAnthropic = isAnthropicCompatibleProvider(item.provider);
+      const isEmbedding = isCustomEmbeddingProvider(item.provider);
+      if (!isOpenAI && !isAnthropic && !isEmbedding) continue;
+
+      if (!nodes.has(item.provider)) {
+        nodes.set(item.provider, await getProviderNodeById(item.provider));
+      }
+      const node = nodes.get(item.provider);
+      if (!node) {
+        const kind = isOpenAI ? "OpenAI Compatible" : isAnthropic ? "Anthropic Compatible" : "Custom Embedding";
+        return NextResponse.json({ error: `${kind} node not found` }, { status: 404 });
+      }
+      item.providerSpecificData = {
+        ...(item.providerSpecificData || {}),
+        prefix: node.prefix,
+        ...(isOpenAI ? { apiType: node.apiType } : {}),
+        baseUrl: node.baseUrl,
+        nodeName: node.name,
+      };
+    }
+
     const results = await createProviderConnectionsBulk(items);
     return NextResponse.json({ results }, { status: 201 });
   } catch (error) {
