@@ -4,6 +4,7 @@ import "open-sse/index.js";
 import { getSettings, getProviderConnections, updateProviderConnection } from "@/lib/localDb";
 import { getClaudeUsage } from "open-sse/services/usage/claude.js";
 import { getCodexUsage } from "open-sse/services/usage/codex.js";
+import { getAntigravityUsage } from "open-sse/services/usage/google.js";
 import { getExecutor } from "open-sse/executors/index.js";
 import { CLAUDE_CLI_SPOOF_HEADERS } from "open-sse/providers/shared.js";
 import { proxyAwareFetch } from "open-sse/utils/proxyFetch.js";
@@ -22,6 +23,10 @@ const providerHandlers = {
   codex: {
     getUsage: getCodexUsage,
     sendPing: sendCodexPing,
+  },
+  antigravity: {
+    getUsage: getAntigravityUsage,
+    sendPing: sendAntigravityPing,
   },
 };
 
@@ -263,9 +268,10 @@ export async function runQuotaAutoPingTick(deps = createDefaultDeps(), state = g
   state.running = true;
   try {
     const settings = await deps.getSettings();
+    const handlers = deps.providerHandlers || providerHandlers;
 
     for (const [provider, providerConfig] of Object.entries(C.providers)) {
-      const handler = providerHandlers[provider];
+      const handler = handlers[provider];
       if (!handler) continue;
 
       const enabledMap = settings?.[providerConfig.settingsKey]?.connections || {};
@@ -286,6 +292,37 @@ export async function runQuotaAutoPingTick(deps = createDefaultDeps(), state = g
     console.warn("[AutoPing] tick error:", e.message);
   } finally {
     state.running = false;
+  }
+}
+
+async function sendAntigravityPing(connection, providerConfig, proxyOptions, deps) {
+  const executor = deps.getExecutor("antigravity");
+  const { response } = await executor.execute({
+    model: providerConfig.pingModel,
+    stream: true,
+    credentials: {
+      accessToken: connection.accessToken,
+      connectionId: connection.id,
+      providerSpecificData: connection.providerSpecificData,
+    },
+    proxyOptions,
+    log: console,
+    messages: [
+      {
+        role: "user",
+        content: providerConfig.pingText,
+      },
+    ],
+  });
+
+  const reader = response.body.getReader();
+  try {
+    while (true) {
+      const { done } = await reader.read();
+      if (done) return;
+    }
+  } finally {
+    reader.releaseLock?.();
   }
 }
 
